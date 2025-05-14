@@ -1,103 +1,105 @@
-# Mem0 Agent - Memory-Powered AI Assistant
+# LeanChems AI CRM
 
-This project demonstrates how to build an AI assistant with memory capabilities using the Mem0 library, OpenAI, and Supabase for authentication and vector storage.
-
-The Live Agent Studio integration verison referenced below also shows how to integrate Mem0 with a Pydantic AI agent.
+A modern, AI-powered CRM system built with Next.js, Supabase, and OpenAI.
 
 ## Features
 
-- **🧠 Long-term Memory**: The AI remembers past conversations and preferences
-- **🔒 Secure Authentication**: User data is protected with Supabase authentication
-- **💬 Personalized Responses**: Get responses tailored to your history and context
-- **🌐 Streamlit Interface**: Easy-to-use web interface for chatting with the AI
-
-## Project Structure
-
-This repository contains multiple implementations of the Mem0 agent:
-
-1. **Basic Implementation** (`iterations/v1-basic-mem0.py`): Simple implementation using in-memory storage
-2. **Supabase Integration** (`iterations/v2-supabase-mem0.py`): Enhanced implementation with Supabase vector storage
-3. **Streamlit Web Interface** (`iterations/v3-streamlit-supabase-mem0.py`): Basic Streamlit web application with Supabase authentication for mem0 user IDs
-4. **Live Agent Studio Integration** (`studio-integration-version/`): Code for integrating with Live Agent Studio
-
-The `studio-integration-version` folder contains the code used to integrate this agent into the Live Agent Studio, including:
-- API endpoint setup
-- Database integration
-- Authentication handling
-- Message history management
+- 🔐 Secure authentication with Supabase
+- 👥 Customer management with AI-powered insights
+- 💬 AI chat assistant with memory
+- 📊 Data analysis and reporting
+- 🎨 Modern, responsive UI with Tailwind CSS
 
 ## Prerequisites
 
-- Python 3.11+
-- OpenAI API key
+- Node.js 18+ and npm
 - Supabase account and project
+- OpenAI API key
 
-## Setup Instructions
+## Environment Variables
 
-1. **Create and activate a virtual environment**:
-   ```bash
-   # On Windows
-   python -m venv venv
-   venv\Scripts\activate
+Create a `.env.local` file in the root directory with the following variables:
 
-   # On macOS/Linux
-   python -m venv venv
-   source venv/bin/activate
-   ```
+```env
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+OPENAI_API_KEY=your_openai_api_key
+```
 
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Database Setup
 
-3. **Set up environment variables**:
-   Copy the `.env.example` file to `.env` and fill in your API keys:
-   - `OPENAI_API_KEY`: Your OpenAI API key
-   - `MODEL_CHOICE`: The OpenAI model to use (defaults to gpt-4o-mini)
-   - `DATABASE_URL`: Your Supabase PostgreSQL connection string
-   - `SUPABASE_URL`: Your Supabase project URL
-   - `SUPABASE_KEY`: Your Supabase service role key
+1. Create the following tables in your Supabase database:
 
-4. **Run the application**:
-   ```bash
-   streamlit run iterations/v3-streamlit-supabase-mem0.py
-   ```
+### customers
+```sql
+create table customers (
+  id uuid default uuid_generate_v4() primary key,
+  customer_id text unique not null,
+  display_id text unique not null,
+  customer_name text not null,
+  input_conversation text[] default '{}',
+  output_conversation text[] default '{}',
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+```
 
-## Supabase Setup
+### memories
+```sql
+create table memories (
+  id uuid default uuid_generate_v4() primary key,
+  user_id uuid references auth.users not null,
+  memory text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+```
 
-1. Create a Supabase account and project at [supabase.com](https://supabase.com)
-2. Get your Database URL from: Project Settings > Database
-3. Get your API keys from: Project Settings > API
+### deals
+```sql
+create table deals (
+  id uuid default uuid_generate_v4() primary key,
+  input_log text not null,
+  ai_response_log text not null,
+  created_by uuid references auth.users not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+```
 
-## How It Works
+## Installation
 
-The application uses:
-- **Mem0**: For memory management and retrieval
-- **OpenAI**: For generating AI responses
-- **Supabase**: For authentication and vector storage
-- **Streamlit**: For the web interface
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/leanchems-ai-crm.git
+cd leanchems-ai-crm
+```
 
-When a user sends a message, the system:
-1. Retrieves relevant memories based on the query
-2. Includes these memories in the prompt to OpenAI
-3. Stores the conversation as a new memory
-4. Displays the response to the user
+2. Install dependencies:
+```bash
+npm install
+```
 
-## Studio Integration
+3. Run the development server:
+```bash
+npm run dev
+```
 
-The `studio-integration-version` folder contains everything needed to deploy this agent to the Live Agent Studio:
+4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-- `mem0_agent.py`: Core agent implementation
-- `mem0_agent_endpoint.py`: FastAPI endpoint for the agent
-- `Dockerfile`: Container configuration for deployment
-- `.env.example`: Template for required environment variables
+## Building for Production
 
-## Troubleshooting
+```bash
+npm run build
+npm start
+```
 
-1. **Authentication Issues**:
-   - Verify your Supabase credentials are correctly set in the `.env` file
-   - Check if your Supabase project has Email Auth enabled
+## Contributing
 
-2. **Database Connection Issues**:
-   - Verify your DATABASE_URL is correctly formatted
-   - Make sure you aren't using special characters in your database password. See the note in `.env.example`.
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
