@@ -21,6 +21,7 @@ import openai
 from PyPDF2 import PdfReader
 from thefuzz import fuzz
 import datetime
+import pandas as pd
 
 # --- Custom CSS for beautiful UI ---
 st.markdown("""
@@ -736,33 +737,158 @@ def update_customer_interaction(customer_id: str, new_input: str, new_output: st
         return response.data
     return None
 
+def extract_file_content(file):
+    """Extract content from different file types"""
+    try:
+        file_type = file.name.split('.')[-1].lower()
+        
+        if file_type == 'pdf':
+            # Handle PDF files
+            pdf_reader = PdfReader(file)
+            content = ""
+            for page in pdf_reader.pages:
+                content += page.extract_text() + "\n"
+            return content
+            
+        elif file_type == 'txt':
+            # Handle text files
+            return file.getvalue().decode("utf-8")
+            
+        elif file_type == 'docx':
+            # Handle Word documents
+            import docx
+            doc = docx.Document(file)
+            content = ""
+            for paragraph in doc.paragraphs:
+                content += paragraph.text + "\n"
+            return content
+            
+        else:
+            raise ValueError(f"Unsupported file type: {file_type}")
+            
+    except Exception as e:
+        raise Exception(f"Error extracting file content: {str(e)}")
+
+def process_uploaded_file(file, customer_id: str):
+    """Process uploaded file and store its content in customer conversation"""
+    try:
+        # Extract file content based on file type
+        file_content = extract_file_content(file)
+        
+        # Create a summary of the file content
+        summary_prompt = f"""Analyze the following document content for CRM purposes:
+        {file_content}
+        
+        Format the analysis to include:
+        1. Key points and main topics
+        2. Important details and specifications
+        3. Any specific requirements or needs mentioned
+        4. Potential business opportunities
+        5. Relevant product matches (RDP, SBR, HPMC)
+        """
+        
+        messages = [
+            {"role": "system", "content": "You are a document analysis assistant specialized in chemical trading. Analyze the content for CRM purposes, focusing on business opportunities and product matches."},
+            {"role": "user", "content": summary_prompt}
+        ]
+        
+        # Get AI summary
+        summary = ""
+        for chunk in get_openai_response(messages, model):
+            if chunk.choices[0].delta.content:
+                summary += chunk.choices[0].delta.content
+        
+        # Store in customer conversation
+        update_customer_interaction(
+            customer_id,
+            f"Uploaded file: {file.name}\nContent: {file_content}",
+            f"File Analysis:\n{summary}"
+        )
+        
+        return True, "File processed and stored successfully!"
+    except Exception as e:
+        return False, f"Error processing file: {str(e)}"
+
 def render_update_interaction_ui(user_id: str):
     """Render the Update Interaction window UI"""
     st.subheader("🔄 Update Customer Interaction")
     st.markdown("---")
+    
     # Step 1: Customer Selection
     customers = get_all_customer_names()
     if not customers:
         st.warning("No customers found. Please create a customer first.")
         return
+    
     st.subheader("👤 Select Customer")
     selected_customer = st.selectbox(
         "Select Customer",
         options=list(customers.keys()),
-        format_func=lambda x: f"{x} ({customers[x]})"
+        format_func=lambda x: f"{x} ({customers[x]})",
+        key="update_interaction_customer_select"
     )
+    
     if not selected_customer:
         return
+    
     st.markdown("---")
-    # Step 2: Contextual View
+    
+    # --- NEW: View All Interactions Table & Export ---
+    st.subheader("📋 All Interactions Table")
+    interactions = get_customer_interactions(customers[selected_customer])
+    if interactions:
+        df = pd.DataFrame(interactions)
+        # Reorder columns for clarity
+        cols = [c for c in ["created_at", "interaction_input", "llm_output_summary"] if c in df.columns]
+        df = df[cols]
+        df = df.rename(columns={
+            "created_at": "Date",
+            "interaction_input": "Input",
+            "llm_output_summary": "AI Output"
+        })
+        st.dataframe(df, use_container_width=True)
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Export Interactions to CSV",
+            data=csv,
+            file_name=f"{selected_customer}_interactions.csv",
+            mime='text/csv',
+            key="export_interactions_csv"
+        )
+    else:
+        st.info("No interactions found for this customer.")
+    st.markdown("---")
+    
+    # Step 2: File Upload Section
+    st.subheader("📄 Upload Document")
+    uploaded_file = st.file_uploader(
+        "Upload a document (PDF, TXT, DOCX)",
+        type=['pdf', 'txt', 'docx'],
+        key="customer_file_upload"
+    )
+    
+    if uploaded_file:
+        if st.button("Process Document"):
+            success, message = process_uploaded_file(uploaded_file, customers[selected_customer])
+            if success:
+                st.success(message)
+            else:
+                st.error(message)
+    
+    st.markdown("---")
+    
+    # Step 3: Contextual View
     st.subheader("🗂️ View Mode")
     view_mode = st.radio(
         "View Mode",
         ["Full Chat Thread", "Summarized Insight"],
-        horizontal=True
+        horizontal=True,
+        key="update_interaction_view_mode"
     )
+    
     # Fetch customer interactions
     interactions = get_customer_interactions(customers[selected_customer])
+    
     if view_mode == "Full Chat Thread":
         st.subheader("💬 Interaction History")
         for interaction in interactions:
@@ -775,27 +901,34 @@ def render_update_interaction_ui(user_id: str):
             summary_prompt = f"Summarize the following customer interactions for {selected_customer}:\n"
             for interaction in interactions[:5]:  # Last 5 interactions
                 summary_prompt += f"\n{interaction['created_at']}: {interaction['interaction_input']}\n"
+            
             messages = [
                 {"role": "system", "content": "Summarize the customer interactions concisely, highlighting key points and progress."},
                 {"role": "user", "content": summary_prompt}
             ]
+            
             with st.spinner("Generating summary..."):
                 summary = "".join(chunk.choices[0].delta.content for chunk in get_openai_response(messages, model) if chunk.choices[0].delta.content)
                 st.write(summary)
+    
     st.markdown("---")
-    # Step 3: New Interaction Input
+    
+    # Step 4: New Interaction Input
     st.markdown("### ✍️ New Interaction")
     st.caption("Add a new customer interaction and analyze it with AI.")
     new_interaction = st.text_area("📝 Enter new interaction details")
+    
     if st.button("💡 Analyze with AI") and new_interaction:
-        # Step 4: AI Analysis
+        # Step 5: AI Analysis
         spin_analysis = analyze_spin_elements(new_interaction)
         sales_stage = determine_sales_stage(new_interaction)
         next_action = suggest_next_action(new_interaction, spin_analysis, sales_stage)
+        
         st.session_state['spin_analysis'] = spin_analysis
         st.session_state['sales_stage'] = sales_stage
         st.session_state['next_action'] = next_action
         st.session_state['new_interaction'] = new_interaction
+    
     # Display analysis if available
     if all(k in st.session_state for k in ['spin_analysis', 'sales_stage', 'next_action', 'new_interaction']):
         st.subheader("🤖 AI Analysis")
@@ -808,12 +941,13 @@ def render_update_interaction_ui(user_id: str):
             st.write(st.session_state['sales_stage'])
         st.write("Suggested Next Action:")
         st.write(st.session_state['next_action'])
+        
         if st.button("💾 Save Interaction"):
             llm_output = f"SPIN Analysis:\n{st.session_state['spin_analysis']}\n\nSales Stage:\n{st.session_state['sales_stage']}\n\nNext Action:\n{st.session_state['next_action']}"
             result = update_customer_interaction(customers[selected_customer], st.session_state['new_interaction'], llm_output)
             if result:
                 st.success("Interaction saved successfully!")
-                # Optionally clear session state for next entry
+                # Clear session state for next entry
                 for k in ['spin_analysis', 'sales_stage', 'next_action', 'new_interaction']:
                     if k in st.session_state:
                         del st.session_state[k]
