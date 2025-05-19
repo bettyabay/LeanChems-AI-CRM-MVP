@@ -40,6 +40,7 @@ st.markdown("""
         border: 1px solid #4F8BF9;
         background: #F7F9FB;
         padding: 0.5em;
+        color: #222;
     }
     .stTabs [data-baseweb="tab-list"] {
         gap: 1.5em;
@@ -53,6 +54,25 @@ st.markdown("""
     }
     .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
         color: #4F8BF9;
+    }
+    /* --- DARK MODE SUPPORT --- */
+    @media (prefers-color-scheme: dark) {
+        .stTextInput>div>div>input, .stTextArea>div>textarea {
+            background: #222 !important;
+            color: #fff !important;
+            border: 1px solid #4F8BF9 !important;
+        }
+        .stButton>button {
+            background: #222 !important;
+            color: #fff !important;
+        }
+        .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
+            color: #4F8BF9 !important;
+        }
+        .stExpanderHeader {
+            color: #4F8BF9 !important;
+        }
+        /* Add more overrides as needed for other elements */
     }
     </style>
 """, unsafe_allow_html=True)
@@ -189,6 +209,7 @@ def generate_customer_profile(customer_name: str, user_id: str):
 def create_new_customer(customer_name: str, user_id: str):
     """Handle the complete customer creation workflow"""
     # Ensure we have a valid state
+    #  Initialize session state
     if 'customer_creation_state' not in st.session_state or st.session_state.customer_creation_state is None:
         st.session_state.customer_creation_state = {
             'step': 1,
@@ -196,10 +217,14 @@ def create_new_customer(customer_name: str, user_id: str):
             'profile': None,
             'confirmed': False
         }
-    
+    # This checks if we're already creating a customer.
+    # If not, it initializes the process at Step 1, with blank profile and confirmation.
+
+    #This is just storing that dictionary in a local variable called state for easy use.
     state = st.session_state.customer_creation_state
     
     # Step 1: Check for similar customers
+    #Calls the function that looks for existing customer names that are similar
     if state['step'] == 1:
         similar_customers = find_similar_customers(customer_name)
         
