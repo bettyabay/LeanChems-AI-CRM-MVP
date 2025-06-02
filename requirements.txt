@@ -1,6 +1,9 @@
 ﻿streamlit==1.45.0
 python-dotenv==1.1.0
-openai==1.23.6
+# openai==1.23.6
+openai
+# mem0ai==0.1.90
+mem0ai
 supabase==2.15.1
 pandas==2.2.3
 numpy==2.2.5
@@ -11,5 +14,5 @@ tenacity==9.1.2
 python-docx==1.1.2
 streamlit-lottie>=0.0.5,<0.1
 google-search-results==2.4.2
-mem0ai==0.1.90
+
 vecs==0.4.5
