@@ -1501,8 +1501,11 @@ if 'crm_view' not in st.session_state:
 # Sidebar: Only login/logout/profile
 with st.sidebar:
     st.sidebar.title(" AI Powered CRM Chat ")
-    # Add the logo here
-    st.image("C:/Users/USER/Desktop/SM/leanchems logo.png", width=150)
+    # Add the logo here with error handling
+    try:
+        st.image("leanchems logo.png", width=150)
+    except:
+        st.markdown("### 🧠 AI Powered CRM")
     if not st.session_state.authenticated:
         tab1, tab2 = st.tabs(["Login", "Sign Up"])
         with tab1:
