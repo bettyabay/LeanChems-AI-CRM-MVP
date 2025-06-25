@@ -18,3 +18,4 @@ mem0ai>=0.1.90
 vecs>=0.4.5
 langchain-openai
 beautifulsoup4
+google-generativeai
