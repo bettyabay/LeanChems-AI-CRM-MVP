@@ -858,22 +858,15 @@ def search_documents(query: str, user_id: str, limit: int = 3):
     try:
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
         def get_embedding():
-            if LLM_PROVIDER == 'openai':
-                return openai_client.embeddings.create(
-                    input=query,
-                    model="text-embedding-3-small"
-                ).data[0].embedding
-            elif LLM_PROVIDER == 'gemini':
-                return gemini_embed(query)
-            else:
-                raise ValueError(f"Unknown LLM_PROVIDER: {LLM_PROVIDER}")
+            # Only use Gemini embeddings for both storage and retrieval
+            return gemini_embed(query)
         query_embedding = get_embedding()
 
-        # Search Supabase documents table with retry
+        # Search Supabase documents1 table with retry
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
         def search_supabase():
             return supabase_client.rpc(
-                'match_documents',
+                'match_documents1',
                 {
                     'query_embedding': query_embedding,
                     'match_count': limit,
