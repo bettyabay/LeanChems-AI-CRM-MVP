@@ -226,13 +226,52 @@ def gemini_chat(messages):
 def gemini_embed(text):
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY not set in environment.")
-    payload = {"content": {"parts": [{"text": text}]}}
-    headers = {"Content-Type": "application/json"}
-    params = {"key": GEMINI_API_KEY}
-    response = requests.post(GEMINI_EMBED_URL, params=params, headers=headers, data=json.dumps(payload))
-    response.raise_for_status()
-    embedding = response.json().get('embedding', {}).get('values', None) 
-    return embedding
+    try:
+        payload = {
+            "content": {
+                "parts": [
+                    {"text": text}
+                ]
+            }
+        }
+        headers = {"Content-Type": "application/json"}
+        params = {"key": GEMINI_API_KEY}
+        response = requests.post(
+            GEMINI_EMBED_URL, 
+            params=params, 
+            headers=headers, 
+            data=json.dumps(payload),
+            timeout=30
+        )
+        if response.status_code != 200:
+            st.error(f"Gemini API Error: {response.status_code} - {response.text}")
+            response.raise_for_status()
+        response_data = response.json()
+        if 'embedding' in response_data:
+            embedding = response_data['embedding'].get('values', None)
+        elif 'data' in response_data:
+            embedding = response_data['data'][0].get('embedding', None)
+        else:
+            st.error(f"Unexpected response format: {response_data}")
+            raise ValueError("No embedding found in response")
+        if not embedding:
+            raise ValueError("No embedding returned from Gemini API")
+        return embedding
+    except requests.exceptions.ConnectionError as e:
+        st.error(f"Connection error to Gemini API: {str(e)}")
+        st.warning("Please check your internet connection and Gemini API key.")
+        raise
+    except requests.exceptions.Timeout as e:
+        st.error(f"Timeout error to Gemini API: {str(e)}")
+        st.warning("The request to Gemini API timed out. Please try again.")
+        raise
+    except requests.exceptions.RequestException as e:
+        st.error(f"Request error to Gemini API: {str(e)}")
+        st.warning("There was an error communicating with Gemini API.")
+        raise
+    except Exception as e:
+        st.error(f"Unexpected error in gemini_embed: {str(e)}")
+        raise
 
 # Cache OpenAI client and Memory instance
 @st.cache_resource
@@ -858,28 +897,33 @@ def search_documents(query: str, user_id: str, limit: int = 3):
     try:
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
         def get_embedding():
-            # Only use Gemini embeddings for both storage and retrieval
             return gemini_embed(query)
         query_embedding = get_embedding()
-
-        # Search Supabase documents1 table with retry
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
         def search_supabase():
-            return supabase_client.rpc(
-                'match_documents1',
-                {
-                    'query_embedding': query_embedding,
-                    'match_count': limit,
-                    'match_threshold': 0.5,
-                    'filter': {}
-                }
-            ).execute()
-
+            try:
+                response = supabase_client.rpc(
+                    'match_conversation',
+                    {
+                        'query_embedding': query_embedding,
+                        'match_count': limit,
+                        'match_threshold': 0.5,
+                        'filter': {}
+                    }
+                ).execute()
+                return response
+            except Exception as rpc_error:
+                st.error(f"Supabase RPC error details: {str(rpc_error)}")
+                if hasattr(rpc_error, 'message'):
+                    st.error(f"RPC Error message: {rpc_error.message}")
+                if hasattr(rpc_error, 'details'):
+                    st.error(f"RPC Error details: {rpc_error.details}")
+                raise
         response = search_supabase()
-
         if response.data:
             return response.data
-        return []
+        else:
+            return []
     except Exception as e:
         st.error(f"Document search failed: {str(e)}")
         st.error("Please check your internet connection and try again.")
@@ -1655,28 +1699,130 @@ def render_analysis_ui(user_id: str):
     # if 'new_analysis_query_input' in st.session_state:
     #     del st.session_state['new_analysis_query_input']
 
+def check_documents_table():
+    """Check if there are any documents in the documents table"""
+    try:
+        response = supabase_client.table('documents').select('count').execute()
+        return len(response.data) if response.data else 0
+    except Exception as e:
+        st.error(f"Error checking documents table: {str(e)}")
+        return 0
+
+def test_api_connectivity():
+    """Test API connectivity and return status"""
+    results = {}
+    
+    # Test Gemini API
+    if GEMINI_API_KEY:
+        try:
+            # Simple test request
+            test_payload = {"text": "test"}
+            headers = {"Content-Type": "application/json"}
+            params = {"key": GEMINI_API_KEY}
+            
+            response = requests.post(
+                GEMINI_EMBED_URL,
+                params=params,
+                headers=headers,
+                data=json.dumps(test_payload),
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                results['gemini'] = "✅ Working"
+            else:
+                results['gemini'] = f"❌ Error {response.status_code}: {response.text[:100]}"
+        except Exception as e:
+            results['gemini'] = f"❌ Connection failed: {str(e)}"
+    else:
+        results['gemini'] = "❌ No API key"
+    
+    # Test OpenAI API
+    openai_key = os.getenv('OPENAI_API_KEY')
+    if openai_key:
+        try:
+            response = openai_client.embeddings.create(
+                input="test",
+                model="text-embedding-3-small"
+            )
+            results['openai'] = "✅ Working"
+        except Exception as e:
+            results['openai'] = f"❌ Error: {str(e)}"
+    else:
+        results['openai'] = "❌ No API key"
+    
+    # Test Supabase
+    try:
+        response = supabase_client.table('customers').select('count').limit(1).execute()
+        results['supabase'] = "✅ Working"
+    except Exception as e:
+        results['supabase'] = f"❌ Error: {str(e)}"
+    
+    return results
+
 # --- RAG Test UI ---
 def render_rag_test_ui(user_id):
     import streamlit as st
-    st.title("🧪 RAG Test: Document Retrieval")
-    st.write("Test if your uploaded documents (e.g., 2 years of ChatGPT CSV) are being retrieved correctly for RAG.")
+    st.title("🔍 RAG Test: Conversation Retrieval")
     st.markdown("---")
-    
-    query = st.text_input("Enter a query to test document retrieval", key="rag_test_query")
+    # Check if conversations exist in the database
+    try:
+        response = supabase_client.table('conversation').select('count').execute()
+        conv_count = len(response.data) if response.data else 0
+    except Exception as e:
+        st.error(f"Error checking conversation table: {str(e)}")
+        conv_count = 0
+    if conv_count == 0:
+        st.warning("⚠️ No conversations found in the database. Please upload some test conversations first.")
+        st.subheader("📝 Upload Test Conversation")
+        test_content = st.text_area(
+            "Enter test conversation content",
+            value="Customer inquiry about RDP (Redispersible Polymer Powder) for dry-mix mortar applications. Need technical specifications and pricing for construction projects in Ethiopia.",
+            key="test_conversation_content"
+        )
+        if st.button("📤 Upload Test Conversation", key="upload_test_conversation_button"):
+            if test_content:
+                with st.spinner("Uploading test conversation..."):
+                    result = upload_test_conversation(test_content, user_id)
+                    if result:
+                        st.rerun()
+            else:
+                st.warning("Please enter some content for the test conversation.")
+        return
+    st.subheader("🔍 Test Conversation Retrieval")
+    query = st.text_input("Enter a query to test conversation retrieval", key="rag_test_query")
     limit = st.number_input("Number of results to fetch", min_value=1, max_value=10, value=3, step=1, key="rag_test_limit")
     if st.button("🔍 Run RAG Test", key="run_rag_test_button") and query:
-        with st.spinner("Fetching relevant documents from Supabase..."):
-            docs = search_documents(query, user_id, limit=limit)
-        if docs:
-            st.success(f"Found {len(docs)} relevant document(s):")
-            for i, doc in enumerate(docs, 1):
-                st.markdown(f"**Document {i}:**")
-                st.code(doc.get('content', '')[:2000], language='text')
-                st.json(doc.get('metadata', {}))
-                st.markdown("---")
+        with st.spinner("Fetching relevant conversations from Supabase..."):
+            conversations = search_documents(query, user_id, limit=limit)
+        if conversations:
+            # Combine all retrieved conversation contents
+            context = "\n\n".join(conv.get('content', '') for conv in conversations)
+            # Build a prompt for Gemini
+            prompt = (
+                f"Context:\n{context}\n\n"
+                f"User Query: {query}\n\n"
+                "Based on the above context, provide a concise, insightful answer to the user's query. "
+                "If the context is insufficient, say so."
+            )
+            # Call Gemini for analysis
+            analyzed_answer = gemini_chat([
+                {"role": "system", "content": "You are an expert CRM assistant."},
+                {"role": "user", "content": prompt}
+            ])
+            st.subheader("🤖 Gemini's Analyzed Answer")
+            st.write(analyzed_answer)
+            # Optionally, still show the raw retrieved conversations for transparency
+            with st.expander("Show Retrieved Conversations"):
+                for i, conv in enumerate(conversations, 1):
+                    st.markdown(f"**Conversation {i}:**")
+                    st.code(conv.get('content', '')[:2000], language='text')
+                    if conv.get('similarity'):
+                        st.info(f"Similarity Score: {conv.get('similarity', 'N/A'):.4f}")
+                    st.markdown("---")
         else:
-            st.warning("No relevant documents found for this query.")
-    st.caption("This tool helps you debug and verify your RAG pipeline by directly inspecting what the retriever returns from your uploaded documents.")
+            st.warning("No relevant conversations found for this query.")
+    st.caption("This tool helps you debug and verify your RAG pipeline by directly inspecting what the retriever returns from your uploaded conversations.")
 
 # --- Customer search and update interaction for dashboard tab ---
 def render_choose_existing_ui(user_id):
@@ -1954,6 +2100,36 @@ def upload_pdf_to_documents(pdf_path: str, user_id: str = "default_user"):
     }
     supabase_client.table("documents").insert(data).execute()
     print(f"Uploaded {pdf_path} to documents table.")
+
+def upload_test_conversation(content: str, user_id: str = "default_user"):
+    """Upload a test conversation to the conversation table for RAG testing"""
+    try:
+        # Generate embedding for the content
+        embedding = gemini_embed(content)
+        
+        # Store in Supabase conversation table
+        data = {
+            "content": content,
+            "embedding": embedding,
+            "metadata": {
+                "user_id": user_id,
+                "source": "test_upload",
+                "type": "conversation"
+            }
+        }
+        
+        response = supabase_client.table("conversation").insert(data).execute()
+        
+        if response.data:
+            st.success(f"Successfully uploaded test conversation with ID: {response.data[0]['id']}")
+            return response.data[0]
+        else:
+            st.error("Failed to upload test conversation")
+            return None
+            
+    except Exception as e:
+        st.error(f"Error uploading test conversation: {str(e)}")
+        return None
 
 # Update the main execution block to use the new sidebar
 if __name__ == "__main__":
