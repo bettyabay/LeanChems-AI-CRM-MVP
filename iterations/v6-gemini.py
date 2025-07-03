@@ -28,6 +28,7 @@ import requests
 import urllib.parse
 from serpapi import GoogleSearch  # Keep SerpAPI for combined results
 from bs4 import BeautifulSoup
+import numpy as np
 
 # --- Custom CSS for beautiful UI ---
 st.markdown("""
@@ -247,6 +248,7 @@ def gemini_embed(text):
             st.error(f"Gemini API Error: {response.status_code} - {response.text}")
             response.raise_for_status()
         response_data = response.json()
+        print("DEBUG: Gemini embed API raw response:", response_data)  # <--- Debug print
         if 'embedding' in response_data:
             embedding = response_data['embedding'].get('values', None)
         elif 'data' in response_data:
@@ -733,6 +735,24 @@ Provide honest results—if a construction vertical is not present, list as "N/A
             profile_text += chunk.choices[0].delta.content
     return profile_text
 
+def ensure_vector(embedding):
+    # If it's a string, try to parse as JSON
+    if isinstance(embedding, str):
+        try:
+            embedding = json.loads(embedding)
+        except Exception:
+            raise ValueError("Embedding string could not be parsed as JSON array.")
+    # If it's a list of numbers (possibly as strings), convert all to float
+    if isinstance(embedding, list):
+        # If it's a list of lists (shouldn't happen for a single embedding), flatten
+        if len(embedding) > 0 and isinstance(embedding[0], list):
+            embedding = embedding[0]
+        return [float(x) for x in embedding]
+    # If it's a single float or int, raise error
+    if isinstance(embedding, (float, int)):
+        raise ValueError("Embedding is a single number, expected a list of floats.")
+    raise ValueError(f"Unexpected embedding type: {type(embedding)}")
+
 def create_new_customer(customer_name: str, user_id: str):
     """Handle the complete customer creation workflow"""
     # Ensure we have a valid state
@@ -790,18 +810,31 @@ def create_new_customer(customer_name: str, user_id: str):
     if state['step'] == 3 and state['confirmed']:
         customer_id = generate_customer_id()
         display_id = generate_display_id()
-        
+        profile_input = f"Create profile for {customer_name}"
+        profile_output = str(state['profile'])
+        # --- Generate embedding for the profile input ---
+        embedding = gemini_embed(profile_input)
+        embedding = ensure_vector(embedding)
+        interaction_embeddings = [embedding]  # Always a list of lists
+        # Remove debug print
+        # print("DEBUG: embedding to be saved:", embedding, type(embedding))
+        interaction_json = {
+            "input": profile_input,
+            "output": profile_output,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "user_id": user_id
+        }
         data = {
             "customer_id": customer_id,
             "display_id": display_id,
             "customer_name": customer_name,
-            "input_conversation": [f"Create profile for {customer_name}"],
-            "output_conversation": [str(state['profile'])]
+            "input_conversation": [profile_input],
+            "output_conversation": [profile_output],
+            "interaction_metadata": [interaction_json],  # list of dicts (JSON)
+            "interaction_embeddings": interaction_embeddings  # list of lists of floats (vector per interaction)
         }
-        
         try:
             response = supabase_client.table('customers').insert(data).execute()
-            
             if response.data:
                 # Clear the creation state first
                 st.session_state.customer_creation_state = None
@@ -965,6 +998,7 @@ def handle_create_customer_flow(customer_name: str, user_input: str, ai_output: 
         store_customer_conversation(customer_name, user_input, ai_output)
         st.success(f"Customer {customer_name} not found. Created new customer.")
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_all_customer_names():
     response = supabase_client.table('customers').select('customer_name,customer_id').execute()
     if response.data:
@@ -978,7 +1012,66 @@ def load_lottieurl(url: str):
         return None
     return r.json()
 
+def detect_latest_interaction_query(message):
+    pattern = re.compile(r'(latest|last) interaction with ([\w\s]+)', re.IGNORECASE)
+    match = pattern.search(message)
+    if match:
+        customer_name = match.group(2).strip()
+        return customer_name
+    return None
+
+def get_latest_interaction_by_name(customer_name: str):
+    customer = supabase_client.table('customers').select('interaction_metadata').eq('customer_name', customer_name).single().execute()
+    if customer.data and customer.data.get('interaction_metadata'):
+        interactions = customer.data['interaction_metadata']
+        if interactions:
+            return interactions[-1]  # Last (latest) interaction
+    return None
+
+def detect_summarize_query(message):
+    pattern = re.compile(r'summarize (my )?interaction(s)? with ([\w\s]+)', re.IGNORECASE)
+    match = pattern.search(message)
+    if match:
+        customer_name = match.group(3).strip()
+        return customer_name
+    return None
+
+def summarize_interactions_with_customer(customer_name, user_id, n=5):
+    customer = supabase_client.table('customers').select('interaction_metadata').eq('customer_name', customer_name).single().execute()
+    if customer.data and customer.data.get('interaction_metadata'):
+        interactions = customer.data['interaction_metadata'][-n:]  # Last n interactions
+        if not interactions:
+            return f"No interactions found for {customer_name}."
+        context = ""
+        for i, interaction in enumerate(interactions, 1):
+            context += f"Interaction {i}:\nInput: {interaction['input']}\nOutput: {interaction['output']}\n"
+        system_prompt = f"Summarize the following interactions with {customer_name}:"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": context}
+        ]
+        response = get_llm_response(messages, model)
+        return ''.join(chunk.choices[0].delta.content for chunk in response if chunk.choices[0].delta.content)
+    return f"No interactions found for {customer_name}."
+
 def chat_with_memories(message, user_id):
+    # Meta-query detection for latest interaction
+    customer_name_meta = detect_latest_interaction_query(message)
+    if customer_name_meta:
+        latest = get_latest_interaction_by_name(customer_name_meta)
+        if not latest:
+            return f"No interactions found for {customer_name_meta}."
+        formatted = (
+            f"Latest interaction with {customer_name_meta}:\n"
+            f"Input: {latest['input']}\n"
+            f"Output: {latest['output']}\n"
+            f"Timestamp: {latest['timestamp']}\n"
+        )
+        return formatted
+    # Meta-query detection for summarize
+    customer_name_summarize = detect_summarize_query(message)
+    if customer_name_summarize:
+        return summarize_interactions_with_customer(customer_name_summarize, user_id)
     try:
         # 1. Detect if a customer is mentioned in the message
         customer_dict = get_all_customer_names()
@@ -988,17 +1081,15 @@ def chat_with_memories(message, user_id):
                 mentioned_customer = name
                 break
 
-        # 2. Fetch customer conversations if mentioned
+        # 2. Fetch customer conversations if mentioned (RAG retrieval)
         customer_context = ""
         if mentioned_customer:
-            customer_data = fetch_customer(mentioned_customer)
-            if customer_data:
+            customer_id = customer_dict[mentioned_customer]
+            relevant_interactions = retrieve_relevant_interactions(customer_id, message, top_k=3)
+            if relevant_interactions:
                 customer_context += f"\nCustomer: {mentioned_customer}\n"
-                # Add recent input/output conversations to context
-                inps = customer_data.get('input_conversation', [])
-                outs = customer_data.get('output_conversation', [])
-                for inp, out in zip(inps, outs):
-                    customer_context += f"User: {inp}\nAI: {out}\n"
+                for interaction in relevant_interactions:
+                    customer_context += f"User: {interaction['input']}\nAI: {interaction['output']}\n(Similarity: {interaction['similarity']:.2f})\n"
 
         # 3. Fetch relevant memories (filter out empty/irrelevant)
         relevant_memories = get_cached_memories(message, user_id)
@@ -1006,7 +1097,6 @@ def chat_with_memories(message, user_id):
             f"- {entry['memory']}" for entry in relevant_memories["results"]
             if entry['memory'] and entry['memory'].strip() and entry['memory'].strip().lower() != "not specified"
         )
-        
         # 4. Search relevant documents
         relevant_docs = search_documents(message, user_id)
         docs_str = ""
@@ -1014,11 +1104,10 @@ def chat_with_memories(message, user_id):
             docs_str = "\nRelevant Conversations from Database:\n"
             for i, doc in enumerate(relevant_docs, 1):
                 docs_str += f"\nConversation {i}:\n{doc.get('content', '')}\n"
-        
         # 5. Build the system prompt/context
         system_prompt = f"""
 You are a helpful AI assistant specialized in chemical trading and CRM.
-If the user asks about a specific customer, use the customer's conversation history below.
+If the user asks about a specific customer, use the customer's most relevant past interactions below (retrieved by semantic similarity).
 Also use the provided memories and relevant conversations from the database.
 If you don't find relevant information, say so.
 
@@ -1030,12 +1119,10 @@ Customer context:
         
 {docs_str}
 """
-        
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": message}
         ]
-        
         with st.spinner("Thinking..."):
             response = get_llm_response(messages, model)
             full_response = ""
@@ -1046,26 +1133,23 @@ Customer context:
                     full_response += content
                     response_placeholder.markdown(full_response + "▌")
             response_placeholder.markdown(full_response)
-
             # Show what conversations were used
-            if relevant_docs:
-                with st.expander("Conversations used for this response"):
-                    for i, doc in enumerate(relevant_docs, 1):
-                        st.write(f"Conversation {i}:")
-                        st.write(doc.get('content', ''))
-
+            if mentioned_customer and relevant_interactions:
+                with st.expander("Relevant Past Interactions Used for this Response"):
+                    for i, interaction in enumerate(relevant_interactions, 1):
+                        st.write(f"Interaction {i} (Similarity: {interaction['similarity']:.2f}):")
+                        st.write(f"User: {interaction['input']}")
+                        st.write(f"AI: {interaction['output']}")
         # Create new memories from the conversation
         messages.append({"role": "assistant", "content": full_response})
         memory.add(messages, user_id=user_id)
-
         # --- New: Automatically store conversation if customer is mentioned ---
         try:
             if mentioned_customer:
-                update_customer_memory(customer_dict[mentioned_customer], message, full_response)
+                update_customer_interaction(customer_dict[mentioned_customer], message, full_response, user_id)
                 st.info(f"Conversation added to {mentioned_customer}'s record.")
         except Exception as e:
             st.warning(f"Tried to auto-store conversation for mentioned customer, but got error: {str(e)}")
-
         return full_response
     except Exception as e:
         st.error(f"An error occurred during chat: {str(e)}")
@@ -1175,78 +1259,91 @@ def get_customer_interactions(customer_id: str):
         st.error(f"Error fetching interactions: {str(e)}")
         return []
 
-def analyze_spin_elements(text: str):
-    """Analyze text for SPIN selling elements"""
-    system_prompt = """Analyze the following sales interaction and identify SPIN elements:
-    - Situation: Current state or context
-    - Problem: Issues or challenges mentioned
-    - Implication: Consequences of the problem
-    - Need-Payoff: Benefits of solving the problem
-    
-    Format your response as:
-    SPIN Analysis:
-    - Situation: [details]
-    - Problem: [details]
-    - Implication: [details]
-    - Need-Payoff: [details]
-    """
+def analyze_spin_elements(new_interaction: str, past_context: str):
+    """Analyze text for SPIN selling elements, using past interactions for context."""
+    system_prompt = f"""Analyze the "New Interaction" below to identify SPIN elements (Situation, Problem, Implication, Need-Payoff). Use the "Past Interactions" as context.
+
+If the new interaction is empty or doesn't contain enough information, state that clearly.
+
+**Past Interactions:**
+{past_context}
+
+**New Interaction to Analyze:**
+{new_interaction}
+
+Format your response as:
+SPIN Analysis:
+- Situation: [details]
+- Problem: [details]
+- Implication: [details]
+- Need-Payoff: [details]
+"""
     
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": text}
+        {"role": "user", "content": "Please provide the SPIN analysis."}
     ]
     
     response = get_llm_response(messages, model)
     return "".join(chunk.choices[0].delta.content for chunk in response if chunk.choices[0].delta.content)
 
-def determine_sales_stage(text: str, current_stage: str = None):
-    """Determine the sales stage based on Brian Tracy's 7-stage process"""
-    system_prompt = """Analyze the following sales interaction and determine the current stage in Brian Tracy's 7-stage sales process:
-    1. Prospecting
-    2. First Contact
-    3. Needs Analysis
-    4. Presenting Solution
-    5. Handling Objections
-    6. Closing
-    7. Follow-up and Referrals
-    
-    Current stage (if known): {current_stage}
-    
-    Format your response as:
-    Sales Stage Analysis:
-    - Current Stage: [stage number and name]
-    - Progress: [whether moving forward, backward, or maintaining]
-    - Key Indicators: [specific points that indicate this stage]
-    """
+def determine_sales_stage(new_interaction: str, past_context: str, current_stage: str = None):
+    """Determine the sales stage based on Brian Tracy's 7-stage process, using past interactions for context."""
+    system_prompt = f"""Analyze the "New Interaction" below to determine the current stage in Brian Tracy's 7-stage sales process. Use the "Past Interactions" as context.
+
+If the new interaction is empty or doesn't contain enough information, state that clearly.
+
+**Past Interactions:**
+{past_context}
+
+**New Interaction to Analyze:**
+{new_interaction}
+
+Current stage (if known): {current_stage}
+
+The 7 stages are:
+1. Prospecting, 2. First Contact, 3. Needs Analysis, 4. Presenting Solution, 5. Handling Objections, 6. Closing, 7. Follow-up and Referrals.
+
+Format your response as:
+Sales Stage Analysis:
+- Current Stage: [stage number and name]
+- Progress: [whether moving forward, backward, or maintaining]
+- Key Indicators: [specific points from the new interaction that indicate this stage]
+"""
     
     messages = [
-        {"role": "system", "content": system_prompt.format(current_stage=current_stage)},
-        {"role": "user", "content": text}
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "Please provide the sales stage analysis."}
     ]
     
     response = get_llm_response(messages, model)
     return "".join(chunk.choices[0].delta.content for chunk in response if chunk.choices[0].delta.content)
 
-def suggest_next_action(text: str, spin_analysis: str, sales_stage: str):
-    """Suggest next action based on interaction context"""
-    system_prompt = """Based on the following information, suggest the next best action:
-    Interaction: {text}
-    SPIN Analysis: {spin_analysis}
-    Sales Stage: {sales_stage}
-    
-    Format your response as:
-    Suggested Next Action:
-    - Primary Action: [specific action to take]
-    - Supporting Tasks: [list of supporting tasks]
-    - Timeline: [suggested timeline]
-    """
+def suggest_next_action(new_interaction: str, past_context: str, spin_analysis: str, sales_stage: str):
+    """Suggest next action based on interaction context."""
+    system_prompt = f"""Based on the following information, suggest the next best action. Use the "Past Interactions" as context for your suggestion.
+
+**Past Interactions:**
+{past_context}
+
+**New Interaction:**
+{new_interaction}
+
+**SPIN Analysis of New Interaction:**
+{spin_analysis}
+
+**Sales Stage Analysis of New Interaction:**
+{sales_stage}
+
+Format your response as:
+Suggested Next Action:
+- Primary Action: [specific action to take]
+- Supporting Tasks: [list of supporting tasks]
+- Timeline: [suggested timeline]
+"""
     
     messages = [
-        {"role": "system", "content": system_prompt.format(
-            text=text,
-            spin_analysis=spin_analysis,
-            sales_stage=sales_stage
-        )},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": "What should be the next action?"}
     ]
     
@@ -1281,20 +1378,149 @@ For every customer you will:
     response = get_llm_response(messages, model)
     return "".join(chunk.choices[0].delta.content for chunk in response if chunk.choices[0].delta.content)
 
-def update_customer_interaction(customer_id: str, new_input: str, new_output: str):
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def update_customer_interaction(customer_id: str, new_input: str, new_output: str, user_id: str):
+    """Update customer interaction, storing a structured JSON object in the metadata."""
+    # 1. Generate embedding for the new input
+    embedding = gemini_embed(new_input)
+    print("DEBUG: embedding from gemini_embed:", embedding, type(embedding))
+    import json
+    import numpy as np
+    # --- Robust ensure_vector function ---
+    def ensure_vector(x):
+        # If it's already a list of floats, return as is
+        if isinstance(x, list):
+            # If it's a list of lists (shouldn't happen), flatten
+            if len(x) > 0 and isinstance(x[0], list):
+                return x[0]
+            return x
+        # If it's a string, try to parse as JSON list, or wrap as list
+        if isinstance(x, str):
+            try:
+                val = json.loads(x)
+                if isinstance(val, list):
+                    return val
+                else:
+                    return [float(val)]
+            except Exception:
+                return [float(x)]
+        # If it's a float or int, wrap as list
+        if isinstance(x, float) or isinstance(x, int):
+            return [float(x)]
+        # If it's a numpy array
+        if isinstance(x, np.ndarray):
+            return x.tolist()
+        # Fallback: wrap as list
+        return [float(x)]
+
+    embedding = ensure_vector(embedding)
+    # 2. Create the new interaction object (as JSON)
+    new_interaction_json = {
+        "input": new_input,
+        "output": new_output,
+        "timestamp": datetime.datetime.now().isoformat(),
+        "user_id": user_id
+    }
+
+    # 3. Fetch existing data
     customer = supabase_client.table('customers').select("*").eq('customer_id', customer_id).single().execute()
-    if customer.data:
-        inps = customer.data.get('input_conversation', [])
-        outs = customer.data.get('output_conversation', [])
-        updated_inputs = inps + [new_input]
-        updated_outputs = outs + [new_output]
+    inps = customer.data.get('input_conversation') or []
+    outs = customer.data.get('output_conversation') or []
+    embs = customer.data.get('interaction_embeddings') or []
+    metas = customer.data.get('interaction_metadata') or []  # This is now a list of JSON objects
+
+    # Defensive: ensure all are lists
+    if not isinstance(inps, list):
+        inps = list(inps) if inps else []
+    if not isinstance(outs, list):
+        outs = list(outs) if outs else []
+    if not isinstance(embs, list):
+        embs = list(embs) if embs else []
+    if not isinstance(metas, list):
+        metas = list(metas) if metas else []
+
+    # 4. Append new data
+    updated_inputs = inps + [new_input]
+    updated_outputs = outs + [new_output]
+    updated_embs = embs + [embedding]  # list of lists of floats
+    updated_metas = metas + [new_interaction_json]  # list of dicts (JSON)
+
+    # --- Ensure every embedding is a list of floats ---
+    updated_embs = [ensure_vector(e) for e in updated_embs]
+    # --- Ensure every metadata is a dict ---
+    updated_metas = [m if isinstance(m, dict) else json.loads(m) for m in updated_metas]
+
+    # Debug: Print types and sample data before update
+    print("DEBUG: Types and lengths before update:")
+    print("updated_inputs:", type(updated_inputs), len(updated_inputs))
+    print("updated_outputs:", type(updated_outputs), len(updated_outputs))
+    print("updated_embs:", type(updated_embs), len(updated_embs))
+    print("updated_metas:", type(updated_metas), len(updated_metas))
+    print("Sample embedding (last):", updated_embs[-1], type(updated_embs[-1]))
+
+    # 5. Save
+    try:
         response = supabase_client.table('customers').update({
             'input_conversation': updated_inputs,
             'output_conversation': updated_outputs,
+            'interaction_embeddings': updated_embs,  # list of lists of floats
+            'interaction_metadata': updated_metas,    # list of dicts (JSON)
             'updated_at': datetime.datetime.now().isoformat()
         }).eq('customer_id', customer_id).execute()
         return response.data
-    return None
+    except Exception as e:
+        print("Supabase update error:", e)
+        st.error(f"Supabase update error: {e}")
+        raise
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def retrieve_relevant_interactions(customer_id: str, query: str, top_k: int = 3):
+    """Retrieve the most relevant past interactions using vector similarity, returning full JSON objects."""
+    query_embedding = gemini_embed(query)
+    print("DEBUG: query_embedding from gemini_embed:", query_embedding, type(query_embedding))
+    import json
+    import numpy as np
+    if isinstance(query_embedding, str):
+        try:
+            query_embedding = json.loads(query_embedding)
+        except Exception:
+            query_embedding = [float(query_embedding)]
+    elif isinstance(query_embedding, float) or isinstance(query_embedding, int):
+        query_embedding = [query_embedding]
+    elif isinstance(query_embedding, np.ndarray):
+        query_embedding = query_embedding.tolist()
+    # Now query_embedding should be a list of floats
+    customer = supabase_client.table('customers').select("interaction_embeddings, interaction_metadata").eq('customer_id', customer_id).single().execute()
+    
+    if not customer.data:
+        return []
+
+    embs = customer.data.get('interaction_embeddings', [])
+    metas = customer.data.get('interaction_metadata', [])
+
+    if not embs or not metas:
+        return []
+
+    # Handle case where embeddings list is shorter than metadata list, or vice-versa
+    min_len = min(len(embs), len(metas))
+    embs_np = np.array(embs[:min_len])
+    metas = metas[:min_len]
+
+    if embs_np.shape[0] == 0:
+        return []
+
+    query_np = np.array(query_embedding)
+    similarities = embs_np @ query_np / (np.linalg.norm(embs_np, axis=1) * np.linalg.norm(query_np) + 1e-8)
+    top_indices = np.argsort(similarities)[-top_k:][::-1]
+
+    # Return the full JSON object from metadata, adding similarity score
+    results = []
+    for i in top_indices:
+        interaction_json = metas[i]
+        interaction_json['similarity'] = float(similarities[i])
+        results.append(interaction_json)
+        
+    return results
 
 def extract_file_content(file):
     """Extract content from different file types"""
@@ -1315,7 +1541,7 @@ def extract_file_content(file):
             
         elif file_type == 'docx':
             # Handle Word documents
-            import docx
+            import docx  
             doc = docx.Document(file)
             content = ""
             for paragraph in doc.paragraphs:
@@ -1458,7 +1684,7 @@ def render_update_interaction_ui(user_id: str):
                 if st.button("💾 Save File Interaction", key="save_file_interaction_button"):
                     llm_output = f"File Analysis:\n{file_analysis_data['summary']}"
                     interaction_input = f"Uploaded file: {file_analysis_data['file_name']}. Content summary: {file_analysis_data['file_content'][:200]}..."
-                    result = update_customer_interaction(customer_id, interaction_input, llm_output)
+                    result = update_customer_interaction(customer_id, interaction_input, llm_output, user_id)
                     if result:
                         st.success(f"File analysis for {file_analysis_data['file_name']} saved successfully!")
                         st.session_state['current_file_analysis'] = None
@@ -1487,7 +1713,7 @@ def render_update_interaction_ui(user_id: str):
             with col1:
                 if st.button("💾 Save Interaction", key="save_interaction_button"):
                     llm_output = f"SPIN Analysis:\n{analysis_data['spin_analysis']}\n\nSales Stage:\n{analysis_data['sales_stage']}\n\nNext Action:\n{analysis_data['next_action']}"
-                    result = update_customer_interaction(customer_id, analysis_data['new_interaction'], llm_output)
+                    result = update_customer_interaction(customer_id, analysis_data['new_interaction'], llm_output, user_id)
                     if result:
                         st.success("Interaction saved successfully!")
                         st.session_state['current_interaction_analysis'] = None
@@ -1503,22 +1729,55 @@ def render_update_interaction_ui(user_id: str):
         # State 5: Default state for adding new interactions/uploads
         else:
             st.subheader("✍️ New Interaction")
-            st.caption("Add a new customer interaction and analyze it with AI.")
-            new_interaction = st.text_area("📝 Enter new interaction details", key="new_interaction_textarea")
+            st.caption("Add a new customer interaction and analyze it with AI, or ask any question about this customer.")
+            new_interaction = st.text_area("📝 Enter new interaction details or any question", key="new_interaction_textarea")
             if st.button("💡 Analyze with AI", key="analyze_interaction_button") and new_interaction:
-                with st.spinner("Analyzing interaction..."):
-                    spin_analysis = analyze_spin_elements(new_interaction)
-                    sales_stage = determine_sales_stage(new_interaction)
-                    next_action = suggest_next_action(new_interaction, spin_analysis, sales_stage)
-                st.session_state['current_interaction_analysis'] = {
-                    'new_interaction': new_interaction,
-                    'spin_analysis': spin_analysis,
-                    'sales_stage': sales_stage,
-                    'next_action': next_action
-                }
+                # Meta-query detection for summarize (always use selected customer)
+                if "summarize" in new_interaction.lower():
+                    summary = summarize_interactions_with_customer(customer_name, user_id)
+                    st.session_state['current_interaction_analysis'] = {
+                        'new_interaction': new_interaction,
+                        'spin_analysis': summary,
+                        'sales_stage': summary,
+                        'next_action': summary
+                    }
+                    st.rerun()
+                with st.spinner("Analyzing interaction or answering your question..."):
+                    # 1. Retrieve relevant past interactions for context (always use selected customer)
+                    relevant_interactions = retrieve_relevant_interactions(customer_id, new_interaction, top_k=3)
+                    past_context = "No relevant past interactions found."
+                    if relevant_interactions:
+                        past_context = "Relevant Past Interactions (for context):\n"
+                        for interaction in relevant_interactions:
+                            past_context += f"- User: {interaction['input']}\\n- AI: {interaction['output']}\\n"
+                    # --- Improved meta-query detection ---
+                    is_question = new_interaction.strip().endswith('?')
+                    is_summarize = "summarize" in new_interaction.lower()
+                    is_latest = "latest interaction" in new_interaction.lower() or "last interaction" in new_interaction.lower()
+
+                    if is_question or is_summarize or is_latest:
+                        # Use open-ended RAG answer for questions and meta-queries
+                        open_answer = answer_any_query_with_rag(new_interaction, customer_id, user_id, top_k=3)
+                        st.session_state['current_interaction_analysis'] = {
+                            'new_interaction': new_interaction,
+                            'spin_analysis': open_answer,
+                            'sales_stage': open_answer,
+                            'next_action': open_answer
+                        }
+                    else:
+                        # Always run classic sales analysis for normal sales interactions
+                        spin_analysis = analyze_spin_elements(new_interaction, past_context)
+                        sales_stage = determine_sales_stage(new_interaction, past_context)
+                        next_action = suggest_next_action(new_interaction, past_context, spin_analysis, sales_stage)
+                        st.session_state['current_interaction_analysis'] = {
+                            'new_interaction': new_interaction,
+                            'spin_analysis': spin_analysis,
+                            'sales_stage': sales_stage,
+                            'next_action': next_action
+                        }
                 st.rerun()
             st.markdown("\n---\n")
-            st.subheader("📄 Upload Document")
+            st.subheader("Upload Document")
             uploaded_file = st.file_uploader(
                 "Upload a document (PDF, TXT, DOCX)",
                 type=['pdf', 'txt', 'docx'],
@@ -2130,6 +2389,23 @@ def upload_test_conversation(content: str, user_id: str = "default_user"):
     except Exception as e:
         st.error(f"Error uploading test conversation: {str(e)}")
         return None
+
+def answer_any_query_with_rag(user_query, customer_id, user_id, top_k=3):
+    relevant_interactions = retrieve_relevant_interactions(customer_id, user_query, top_k=top_k)
+    context = ""
+    if relevant_interactions:
+        context = "Relevant Past Interactions:\n"
+        for interaction in relevant_interactions:
+            context += f"- User: {interaction['input']}\n- AI: {interaction['output']}\n"
+    else:
+        context = "No relevant past interactions found."
+    system_prompt = f"""You are a helpful CRM assistant. Use the relevant past interactions below to answer the user's question.\n\n{context}"""
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_query}
+    ]
+    response = get_llm_response(messages, model)
+    return "".join(chunk.choices[0].delta.content for chunk in response if chunk.choices[0].delta.content)
 
 # Update the main execution block to use the new sidebar
 if __name__ == "__main__":
