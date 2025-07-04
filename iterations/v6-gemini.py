@@ -1807,7 +1807,7 @@ def get_all_customer_data():
         return []
 
 def analyze_crm_data(query: str, user_id: str):
-    """Analyze CRM data based on natural language query (PRODUCTION VERSION)"""
+    """Analyze CRM data based on natural language query (RAG-ENHANCED VERSION)"""
     customers = get_all_customer_data()
     
     context = "Customer Data:\n"
@@ -1832,38 +1832,19 @@ def analyze_crm_data(query: str, user_id: str):
         f"- {entry['memory']}" for entry in relevant_memories["results"]
         if entry['memory'] and entry['memory'].strip() and entry['memory'].strip().lower() != "not specified"
     )
-    
-    system_prompt = """You are a CRM data analyst specialized in chemical trading. Analyze the provided data and answer the user's query.
-    Use the following guidelines:
-    1. Be concise but comprehensive
-    2. Structure your response in a clear, readable format
-    3. Include relevant numbers and statistics when available
-    4. Highlight important trends or patterns
-    5. Suggest actionable insights when relevant
-    
-    Available Data:
-    {context}
-    
-    Relevant Memories:
-    {memories}
-    
-    Format your response as:
-    Analysis:
-    [Your analysis here]
-    
-    Key Findings:
-    - [Finding 1]
-    - [Finding 2]
-    ...
-    
-    Recommendations:
-    - [Recommendation 1]
-    - [Recommendation 2]
-    ...
-    """
-    
+
+    # --- RAG: Retrieve relevant documents and conversations ---
+    relevant_docs = search_documents(query, user_id, limit=5)
+    docs_str = ""
+    if relevant_docs:
+        docs_str = "\nRelevant Documents and Conversations:\n"
+        for i, doc in enumerate(relevant_docs, 1):
+            docs_str += f"\nDocument {i}:\n{doc.get('content', '')}\n"
+
+    system_prompt = """You are a CRM data analyst specialized in chemical trading. Analyze the provided data and answer the user's query.\nUse the following guidelines:\n1. Be concise but comprehensive\n2. Structure your response in a clear, readable format\n3. Include relevant numbers and statistics when available\n4. Highlight important trends or patterns\n5. Suggest actionable insights when relevant\n\nAvailable Data:\n{context}\n\nRelevant Memories:\n{memories}\n\n{docs}\n\nFormat your response as:\nAnalysis:\n[Your analysis here]\n\nKey Findings:\n- [Finding 1]\n- [Finding 2]\n...\n\nRecommendations:\n- [Recommendation 1]\n- [Recommendation 2]\n...\n"""
+
     messages = [
-        {"role": "system", "content": system_prompt.format(context=context, memories=memories_str)},
+        {"role": "system", "content": system_prompt.format(context=context, memories=memories_str, docs=docs_str)},
         {"role": "user", "content": query}
     ]
     try:
