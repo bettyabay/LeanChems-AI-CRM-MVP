@@ -19,3 +19,5 @@ vecs>=0.4.5
 langchain-openai
 beautifulsoup4
 google-generativeai>=0.3.0
+fpdf
+reportlab
