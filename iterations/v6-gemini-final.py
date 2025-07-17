@@ -19,7 +19,7 @@ import sys
 from tenacity import retry, stop_after_attempt, wait_exponential
 import re
 import openai
-from PyPDF2 import PdfReader
+from PyPDF2 import PdfReader, PdfWriter
 from thefuzz import fuzz
 import datetime
 import pandas as pd
@@ -29,6 +29,11 @@ import urllib.parse
 from serpapi import GoogleSearch  # Keep SerpAPI for combined results
 from bs4 import BeautifulSoup
 import numpy as np
+from fpdf import FPDF
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.utils import ImageReader
+import io
 
 # --- Custom CSS for beautiful UI ---
 st.markdown("""
@@ -731,8 +736,9 @@ Provide honest results—if a construction vertical is not present, list as "N/A
     response = get_llm_response(messages, model)
     profile_text = ""
     for chunk in response:
-        if chunk.choices[0].delta.content:
-            profile_text += chunk.choices[0].delta.content
+        content = extract_llm_content(chunk)
+        if content:
+            profile_text += content
     return profile_text
 
 def ensure_vector(embedding):
@@ -859,9 +865,9 @@ def sign_up(email, password, full_name):
             }
         })
         if response and response.user:
-            st.session_state.authenticated = True
-            st.session_state.user = response.user
-            st.rerun()
+            st.success("Sign up successful! Please check your email and confirm your address before logging in.")
+            # Do NOT log the user in automatically after signup
+            # Do NOT set st.session_state.authenticated = True or st.session_state.user = response.user here
         return response
     except Exception as e:
         st.error(f"Error signing up: {str(e)}")
@@ -947,10 +953,11 @@ def search_documents(query: str, user_id: str, limit: int = 3):
                 return response
             except Exception as rpc_error:
                 st.error(f"Supabase RPC error details: {str(rpc_error)}")
-                if hasattr(rpc_error, 'message'):
-                    st.error(f"RPC Error message: {rpc_error.message}")
-                if hasattr(rpc_error, 'details'):
-                    st.error(f"RPC Error details: {rpc_error.details}")
+                # Remove .message and .details accesses
+                # if hasattr(rpc_error, 'message'):
+                #     st.error(f"RPC Error message: {rpc_error.message}")
+                # if hasattr(rpc_error, 'details'):
+                #     st.error(f"RPC Error details: {rpc_error.details}")
                 raise
         response = search_supabase()
         if response.data:
@@ -1051,7 +1058,7 @@ def summarize_interactions_with_customer(customer_name, user_id, n=5):
             {"role": "user", "content": context}
         ]
         response = get_llm_response(messages, model)
-        return ''.join(chunk.choices[0].delta.content for chunk in response if chunk.choices[0].delta.content)
+        return ''.join(extract_llm_content(chunk) for chunk in response if extract_llm_content(chunk))
     return f"No interactions found for {customer_name}."
 
 def chat_with_memories(message, user_id):
@@ -1128,8 +1135,8 @@ Customer context:
             full_response = ""
             response_placeholder = st.empty()
             for chunk in response:
-                if chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
+                content = extract_llm_content(chunk)
+                if content:
                     full_response += content
                     response_placeholder.markdown(full_response + "▌")
             response_placeholder.markdown(full_response)
@@ -1274,7 +1281,7 @@ def analyze_deals_multi(
         now_iso = datetime.datetime.utcnow().isoformat()
 
     system_prompt = f"""
-You are “LeanChem Deal-Management Analyst”.
+You are "LeanChem Deal-Management Analyst".
 
 ▼ DATA PROVIDED
 LAST_DEAL_BLOCK (may be empty)
@@ -1299,7 +1306,7 @@ CURRENT_UTC = {now_iso}
 
    *Progress* is a short string that shows how far the buyer has moved
    through the chemical-purchase steps:  
-   “RFQ → TDS → Sample → Quote → PO → Payment → Delivered → Closed”.
+   "RFQ → TDS → Sample → Quote → PO → Payment → Delivered → Closed".
 
 2. Detect every DEAL EVENT present in NEW_INTERACTION.  
    Codes: 1 RFQ  2 TDSReq  3 SampleReq  4 InfoSent/TDSSent  5 QuoteSent  
@@ -1316,7 +1323,7 @@ CURRENT_UTC = {now_iso}
 
 5. Build a concise NARRATIVE (≤ 5 bullets) that tells
    the story of each open deal from day 1 to now, e.g.  
-   “D-001: RFQ received → TDS sent → 25 kg sample delivered → waiting for PO”.
+   "D-001: RFQ received → TDS sent → 25 kg sample delivered → waiting for PO".
 
 6. Prepare FOLLOW-UP QUESTIONS  
    • Ask for any missing Qty / Price / Currency / Incoterm.  
@@ -1350,21 +1357,20 @@ Return nothing else.
         {"role": "user", "content": "Update the deal tables and generate follow-up questions."}
     ]
     response = get_llm_response(messages, model)
-    return "".join(c.choices[0].delta.content
-                   for c in response if c.choices[0].delta.content)
+    return "".join(extract_llm_content(c) for c in response if extract_llm_content(c))
 
 def sales_stage_tracker(new_interaction: str,
                         past_context: str,
                         last_stage_block: str = ""):
     """
-    Narrative version of Brian-Tracy’s 7-stage tracker.
+    Narrative version of Brian-Tracy's 7-stage tracker.
     Returns two blocks:
       • SALES STAGE STATUS  – one-line narrative for each stage 1-7
       • ACTION PLAN         – ≤3 bullets to advance / expand the deal
     """
 
-    system_prompt = f"""You are “LeanChem 7-Stage Narrative Tracker”.
-
+    system_prompt = f"""You are "LeanChem 7-Stage Narrative Tracker".
+                
 ▼ PREVIOUS_STATUS (may be empty)
 \"\"\"{last_stage_block}\"\"\"
 
@@ -1394,7 +1400,7 @@ Allowed STATUS words (MUST be upper-case and in bold):
 **CURRENT** = active focus right now  
 **PENDING** = not achieved yet
 
-5.  After the seven stages add an “ACTION PLAN” block –  
+5.  After the seven stages add an "ACTION PLAN" block –  
     maximum 3 concise bullets describing what LeanChem should do next.
 
 =================  OUTPUT  =================
@@ -1424,10 +1430,7 @@ ACTION PLAN:
         {"role": "user",   "content": "Return the SALES STAGE STATUS block and ACTION PLAN."}
     ]
     response = get_llm_response(messages, model)
-    return "".join(
-        c.choices[0].delta.content
-        for c in response if c.choices[0].delta.content
-    )
+    return "".join(extract_llm_content(c) for c in response if extract_llm_content(c))
 
 def suggest_next_action(new_interaction: str,
                         past_context: str,
@@ -1442,7 +1445,7 @@ You are LeanChem's CRM copilot.
 
 ▼ DATA SOURCE PRIORITY
 Pull the *Enablers (people)* only from:
-1.  “Key Contacts for Engagement” section of the customer profile  
+1.  "Key Contacts for Engagement" section of the customer profile  
 2.  Names mentioned in NEW_INTERACTION  
 3.  Names mentioned in any historical interaction logs for the same customer
 
@@ -1463,7 +1466,7 @@ SALES_STAGE_ANALYSIS:
 
 ▼ TASK
 1. Draft one **Primary Action** plus up to four supporting tasks—sales-focused and concrete.  
-2. Give an indicative timeline (e.g. “within 3 days”).  
+2. Give an indicative timeline (e.g. "within 3 days").  
 3. Build an **Enablers table** that lists the people who can influence the outcome.
 
    For every person found (max 8 rows):
@@ -1492,8 +1495,7 @@ Enablers:
 
     # stream or single-chunk depending on provider
     response = get_llm_response(messages, model)
-    return "".join(c.choices[0].delta.content
-                   for c in response if c.choices[0].delta.content)
+    return "".join(extract_llm_content(c) for c in response if extract_llm_content(c))
 
 def analyze_customer_update(update_text: str, customer_id: str, customer_name: str):
     """Analyze customer update with AI reasoning (Brian Tracy 7-stage journey style), using all past interactions and the new interaction."""
@@ -1521,7 +1523,7 @@ For every customer you will:
         {"role": "user", "content": user_prompt}
     ]
     response = get_llm_response(messages, model)
-    return "".join(chunk.choices[0].delta.content for chunk in response if chunk.choices[0].delta.content)
+    return ''.join(extract_llm_content(chunk) for chunk in response if extract_llm_content(chunk))
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def update_customer_interaction(customer_id: str, new_input: str, new_output: str, user_id: str):
@@ -1725,8 +1727,9 @@ Format the analysis to include:
         # Get AI summary
         summary = ""
         for chunk in get_llm_response(messages, model):
-            if chunk.choices[0].delta.content:
-                summary += chunk.choices[0].delta.content
+            content = extract_llm_content(chunk)
+            if content:
+                summary += content
 
         # Instead of storing directly, return the content and summary
         # update_customer_interaction(
@@ -2043,7 +2046,7 @@ def analyze_crm_data(query: str, user_id: str):
     ]
     try:
         response = get_llm_response(messages, model)
-        result = "".join(chunk.choices[0].delta.content for chunk in response if chunk.choices[0].delta.content)
+        result = "".join(extract_llm_content(c) for c in response if extract_llm_content(c))
         return result
     except Exception as e:
         st.error(f"OpenAI error: {e}")
@@ -2335,34 +2338,220 @@ def render_choose_existing_ui(user_id):
 
     render_update_interaction_ui(user_id)
 
+    # Utility to overlay data on the static template PDF
+
+def generate_invoice_pdf_with_overlay(
+    template_path,
+    logo_path,
+    output_path,
+    invoice_number,
+    invoice_date,
+    customer_name,
+    customer_address,
+    items,
+    notes,
+    bank_details,
+    contact_info,
+    buffer
+):
+    # 1. Read the template to get size
+    template_reader = PdfReader(template_path)
+    template_page = template_reader.pages[0]
+    width = float(template_page.mediabox.width)
+    height = float(template_page.mediabox.height)
+
+    # 2. Create overlay PDF in memory
+    packet = io.BytesIO()
+    c = canvas.Canvas(packet, pagesize=(width, height))
+# Calculate positions first
+    customer_x = 60
+    customer_y = height // 2 + 80
+
+    # --- Draw 'CUSTOMER' label above the customer name ---
+    c.setFont("Helvetica-Bold", 12)
+    label_x = 60  # Same left margin as customer name
+    label_y = customer_y + 35 # 20 pixels above customer name
+    c.drawString(label_x, label_y, "CUSTOMER :")
+
+    # --- Draw customer name further down into the empty area ---
+    c.setFont("Helvetica-Bold", 16)
+    customer_text = customer_name
+    customer_x = 60  # Left margin
+    customer_y = height // 2 + 80  # Lower on the page (adjust as needed)
+    c.drawString(customer_x, customer_y, customer_text)
+
+    # --- Draw item table header below customer name, left aligned ---
+    c.setFont("Helvetica-Bold", 10)
+    table_y = customer_y - 40  # 40 pixels below customer name
+    col_xs = [60, 180, 280, 380, 480]
+    headers = ["NAME", "UNIT PRICE", "QUANTITY", "VAT", "TOTAL PRICE"]
+    for x, header in zip(col_xs, headers):
+        c.drawString(x, table_y, header)
+    c.setLineWidth(1)
+    c.roundRect(col_xs[0]-10, table_y-10, (col_xs[-1]+100)-(col_xs[0]-10), 25, 10, stroke=1, fill=0)
+
+    # --- Draw item table rows ---
+    c.setFont("Helvetica", 10)
+    row_y = table_y - 25
+    for item in items:
+        c.drawString(col_xs[0], row_y, item['name'])
+        c.drawString(col_xs[1], row_y, str(item['unit_price']))
+        c.drawString(col_xs[2], row_y, str(item['quantity']))
+        c.drawString(col_xs[3], row_y, str(item['vat']))
+        c.drawString(col_xs[4], row_y, str(item['total_price']))
+        row_y -= 20
+
+    c.save()
+    packet.seek(0)
+    overlay_pdf = PdfReader(packet)
+
+    # 3. Merge overlay onto template
+    writer = PdfWriter()
+    base = template_reader.pages[0]
+    base.merge_page(overlay_pdf.pages[0])
+    writer.add_page(base)
+    if buffer is not None:
+        writer.write(buffer)
+        buffer.seek(0)
+        return buffer
+    elif output_path is not None:
+        # Ensure output directory exists
+        import os
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        with open(output_path, "wb") as f:
+            writer.write(f)
+        return output_path
+    else:
+        raise ValueError("Either buffer or output_path must be provided.")
+
+def render_quote_generation_ui(user_id):
+    st.title("📝 Quote Generation")
+    st.write("Generate a quote for a customer, including items you specify and deals from their interaction history.")
+
+    # 1. Select customer
+    customers_dict = get_all_customer_names()
+    if not customers_dict:
+        st.warning("No customers found. Please create a customer first.")
+        return
+    sorted_customer_names = sorted(customers_dict.keys())
+    selected_customer_name = st.selectbox("Select Customer", options=sorted_customer_names, key="quote_customer_select")
+    customer_id = customers_dict[selected_customer_name]
+
+    # 2. Add items for the quote
+    st.subheader("Add Items to Quote")
+    if 'quote_items' not in st.session_state:
+        st.session_state['quote_items'] = []
+    with st.form(key="add_quote_item_form"):
+        item_name = st.text_input("Item Name", key="quote_item_name")
+        item_qty = st.number_input("Quantity", min_value=1, value=1, key="quote_item_qty")
+        item_price = st.number_input("Unit Price", min_value=0.0, value=0.0, format="%.2f", key="quote_item_price")
+        add_item = st.form_submit_button("Add Item")
+        if add_item and item_name and item_price > 0:
+            st.session_state['quote_items'].append({
+                'item': item_name,
+                'qty': item_qty,
+                'price': item_price
+            })
+            st.success(f"Added {item_name} (x{item_qty}) at {item_price:.2f} each.")
+            st.rerun()
+    # Show current items
+    if st.session_state['quote_items']:
+        st.write("**Items in Quote:**")
+        for idx, item in enumerate(st.session_state['quote_items']):
+            st.write(f"{idx+1}. {item['item']} - Qty: {item['qty']}, Price: {item['price']:.2f}")
+        if st.button("Clear Items"):
+            st.session_state['quote_items'] = []
+            st.rerun()
+    else:
+        st.info("No items added yet.")
+
+    # 3. Extract deals from customer interactions
+    st.subheader("Include Deals from Customer Interactions")
+    deals = []
+    interactions = get_customer_interactions(customer_id)
+    if interactions:
+        for interaction in interactions:
+            summary = interaction.get('llm_output_summary', '')
+            for line in summary.split('\n'):
+                if any(keyword in line.lower() for keyword in ['deal', 'product', 'qty', 'price']):
+                    deals.append(line.strip())
+    if deals:
+        st.write("**Extracted Deals:**")
+        for deal in deals:
+            st.write(f"- {deal}")
+    else:
+        st.info("No deals found in customer interactions.")
+
+    # 4. Generate PDF
+    if st.button("Generate Quote PDF"):
+        # Prepare data for overlay
+        invoice_number = "000079"  # Example, you can make this dynamic
+        invoice_date = datetime.datetime.now().strftime("%d/%m/%Y")
+        customer_address = "Kadisco Asian Paints Factory\nAddis Ababa, Ethiopia"  # Example, make dynamic if needed
+        items = []
+        for item in st.session_state['quote_items']:
+            unit_price = float(item['price'])
+            qty = float(item['qty'])
+            vat = round(unit_price * qty * 0.15, 2)  # 15% VAT example
+            total_price = round(unit_price * qty + vat, 2)
+            items.append({
+                'name': item['item'],
+                'unit_price': f"{unit_price:.2f} ETB",
+                'quantity': f"{qty} KG",
+                'vat': f"{vat:.2f} ETB",
+                'total_price': f"{total_price:.2f} ETB"
+            })
+        notes = "We prioritize customer satisfaction. Our team of passionate skiers and snowboarders is dedicated to delivering exceptional service and ensuring your safety and enjoyment on the slopes."
+        bank_details = "Beneficiary: Alhadi Maru Import and Export\nBank: Dashen Bank\nBank Branch: Bulgaria\nBank Account: 7981270984511"
+        contact_info = "+251966274550"
+        import io
+        buffer = io.BytesIO()
+        generate_invoice_pdf_with_overlay(
+            template_path="Kadisco PI (1).pdf",
+            logo_path="leanchems logo.png",
+            output_path=None,  # Not used
+            invoice_number=invoice_number,
+            invoice_date=invoice_date,
+            customer_name=selected_customer_name,
+            customer_address=customer_address,
+            items=items,
+            notes=notes,
+            bank_details=bank_details,
+            contact_info=contact_info,
+            buffer=buffer
+        )
+        st.download_button(
+            label="Download Quote PDF",
+            data=buffer.getvalue(),
+            file_name=f"quote_{selected_customer_name.replace(' ', '_')}.pdf",
+            mime="application/pdf"
+        )
+
 # --- Main CRM Dashboard with Tabs ---
 def main_crm_dashboard(user_id, default_tab=None):
     st.title("CRM Dashboard")
-    
-    # Determine the default tab index based on the default_tab string
-    tab_titles = ["Create Customer", "Choose Existing", "Analysis & Chat", "RAG Test"]
+    tab_titles = ["Create Customer", "Choose Existing", "Analysis & Chat", "Quote Generation" ]  # Removed RAG Test
     default_tab_index = 0 # Default to Create Customer
     if default_tab == 'manage':
         default_tab_index = 1
     elif default_tab == 'analysis':
         default_tab_index = 2
-    elif default_tab == 'rag':
+    elif default_tab == 'quote':
         default_tab_index = 3
-
     tabs = st.tabs(tab_titles)
-
     with tabs[default_tab_index]:
         if default_tab == 'create' or default_tab is None:
             render_customer_creation_ui_tab(user_id)
         elif default_tab == 'manage':
-            st.write("Rendering Manage Existing Customers section...") # Debugging line
+            st.write("Rendering Manage Existing Customers section...")
             render_choose_existing_ui(user_id)
         elif default_tab == 'analysis':
-            st.write("Rendering Report, Analysis & Notification section...") # Debugging line
+            st.write("Rendering Report, Analysis & Notification section...")
             render_analysis_ui(user_id)
-        elif default_tab == 'rag':
-            st.write("Rendering RAG Test section...")
-            render_rag_test_ui(user_id)
+        elif default_tab == 'quote':
+            render_quote_generation_ui(user_id)
 
 # --- Main Streamlit logic below ---
 if st.session_state.get("logout_requested", False):
@@ -2425,25 +2614,21 @@ if st.session_state.authenticated and st.session_state.user:
         st.title("CRM Dashboard")
         st.write("Select an action to get started.")
         col1, col2, col3, col4 = st.columns(4)
-        
         with col1:
             if st.button("Create New Customer", key="btn_create_customer", use_container_width=True, type="primary"):
                 st.session_state.crm_view = 'create'
                 st.rerun()
-
         with col2:
             if st.button("Manage Existing Customers", key="btn_manage_customer", use_container_width=True, type="primary"):
                 st.session_state.crm_view = 'manage'
                 st.rerun()
-
         with col3:
             if st.button("Report, Analysis & Notification", key="btn_analyze_crm", use_container_width=True, type="primary"):
                 st.session_state.crm_view = 'analysis'
                 st.rerun()
-
         with col4:
-            if st.button("RAG Test", key="btn_rag_test", use_container_width=True, type="primary"):
-                st.session_state.crm_view = 'rag'
+            if st.button("Quote Generation", key="btn_quote_generation", use_container_width=True, type="primary"):
+                st.session_state.crm_view = 'quote'
                 st.rerun()
 
     else:
@@ -2467,8 +2652,9 @@ if st.session_state.authenticated and st.session_state.user:
         elif st.session_state.crm_view == 'analysis':
            
             render_analysis_ui(user_id)
-        elif st.session_state.crm_view == 'rag':
-            render_rag_test_ui(user_id)
+        elif st.session_state.crm_view == 'quote':
+            render_quote_generation_ui(user_id)
+        
 
 else:
     # Apply custom styling
@@ -2516,7 +2702,7 @@ def upload_pdf_to_documents(pdf_path: str, user_id: str = "default_user"):
         text += page.extract_text() + "\n"
     
     # 2. Get embedding for the content (using OpenAI)
-    response = openai.Embedding.create(
+    response = openai_client.embeddings.create(
         input=text,
         model="text-embedding-3-small"
     )
@@ -2580,7 +2766,16 @@ def answer_any_query_with_rag(user_query, customer_id, user_id, top_k=3):
         {"role": "user", "content": user_query}
     ]
     response = get_llm_response(messages, model)
-    return "".join(chunk.choices[0].delta.content for chunk in response if chunk.choices[0].delta.content)
+    return "".join(extract_llm_content(c) for c in response if extract_llm_content(c))
+
+# --- Helper to extract content from LLM responses (OpenAI or Gemini) ---
+def extract_llm_content(chunk):
+    choice = chunk.choices[0]
+    if hasattr(choice, 'delta') and hasattr(choice.delta, 'content'):
+        return choice.delta.content
+    elif hasattr(choice, 'content'):
+        return choice.content
+    return None
 
 # Update the main execution block to use the new sidebar
 if __name__ == "__main__":
