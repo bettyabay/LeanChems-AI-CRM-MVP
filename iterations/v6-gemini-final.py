@@ -733,12 +733,8 @@ Provide honest results—if a construction vertical is not present, list as "N/A
     ]
     
     # Get response and convert to string
-    response = get_llm_response(messages, model)
-    profile_text = ""
-    for chunk in response:
-        content = extract_llm_content(chunk)
-        if content:
-            profile_text += content
+    response = gemini_chat(messages)
+    profile_text = response
     return profile_text
 
 def ensure_vector(embedding):
@@ -1057,8 +1053,7 @@ def summarize_interactions_with_customer(customer_name, user_id, n=5):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": context}
         ]
-        response = get_llm_response(messages, model)
-        return ''.join(extract_llm_content(chunk) for chunk in response if extract_llm_content(chunk))
+        return gemini_chat(messages)
     return f"No interactions found for {customer_name}."
 
 def chat_with_memories(message, user_id):
@@ -1131,14 +1126,9 @@ Customer context:
             {"role": "user", "content": message}
         ]
         with st.spinner("Thinking..."):
-            response = get_llm_response(messages, model)
-            full_response = ""
+            # For Gemini, just get the full response at once
+            full_response = gemini_chat(messages)
             response_placeholder = st.empty()
-            for chunk in response:
-                content = extract_llm_content(chunk)
-                if content:
-                    full_response += content
-                    response_placeholder.markdown(full_response + "▌")
             response_placeholder.markdown(full_response)
             # Show what conversations were used
             if mentioned_customer and relevant_interactions:
@@ -1356,8 +1346,7 @@ Return nothing else.
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": "Update the deal tables and generate follow-up questions."}
     ]
-    response = get_llm_response(messages, model)
-    return "".join(extract_llm_content(c) for c in response if extract_llm_content(c))
+    return gemini_chat(messages)
 
 def sales_stage_tracker(new_interaction: str,
                         past_context: str,
@@ -1429,8 +1418,7 @@ ACTION PLAN:
         {"role": "system", "content": system_prompt},
         {"role": "user",   "content": "Return the SALES STAGE STATUS block and ACTION PLAN."}
     ]
-    response = get_llm_response(messages, model)
-    return "".join(extract_llm_content(c) for c in response if extract_llm_content(c))
+    return gemini_chat(messages)
 
 def suggest_next_action(new_interaction: str,
                         past_context: str,
@@ -1495,7 +1483,7 @@ Enablers:
 
     # stream or single-chunk depending on provider
     response = get_llm_response(messages, model)
-    return "".join(extract_llm_content(c) for c in response if extract_llm_content(c))
+    return gemini_chat(messages)
 
 def analyze_customer_update(update_text: str, customer_id: str, customer_name: str):
     """Analyze customer update with AI reasoning (Brian Tracy 7-stage journey style), using all past interactions and the new interaction."""
@@ -1522,8 +1510,7 @@ For every customer you will:
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
     ]
-    response = get_llm_response(messages, model)
-    return ''.join(extract_llm_content(chunk) for chunk in response if extract_llm_content(chunk))
+    return gemini_chat(messages)
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def update_customer_interaction(customer_id: str, new_input: str, new_output: str, user_id: str):
@@ -1725,11 +1712,7 @@ Format the analysis to include:
         ]
 
         # Get AI summary
-        summary = ""
-        for chunk in get_llm_response(messages, model):
-            content = extract_llm_content(chunk)
-            if content:
-                summary += content
+        summary = gemini_chat(messages)
 
         # Instead of storing directly, return the content and summary
         # update_customer_interaction(
@@ -2045,9 +2028,7 @@ def analyze_crm_data(query: str, user_id: str):
         {"role": "user", "content": query}
     ]
     try:
-        response = get_llm_response(messages, model)
-        result = "".join(extract_llm_content(c) for c in response if extract_llm_content(c))
-        return result
+        return gemini_chat(messages)
     except Exception as e:
         st.error(f"OpenAI error: {e}")
         return f"OpenAI error: {e}"
@@ -2061,8 +2042,8 @@ def save_analysis_query(query: str, response: str, user_id: str):
             "created_by": user_id,
             "created_at": datetime.datetime.now().isoformat()
         }
-        response = supabase_client.table('deals').insert(data).execute()
-        return response.data[0] if response.data else None
+        api_response = supabase_client.table('deals').insert(data).execute()
+        return api_response.data[0] if api_response.data else None
     except Exception as e:
         st.error(f"Error saving analysis query: {str(e)}")
         return None
@@ -2706,7 +2687,7 @@ def upload_pdf_to_documents(pdf_path: str, user_id: str = "default_user"):
         input=text,
         model="text-embedding-3-small"
     )
-    embedding = response['data'][0]['embedding']
+    embedding = response.data[0].embedding
     
     # 3. Store in Supabase
     data = {
@@ -2765,17 +2746,7 @@ def answer_any_query_with_rag(user_query, customer_id, user_id, top_k=3):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_query}
     ]
-    response = get_llm_response(messages, model)
-    return "".join(extract_llm_content(c) for c in response if extract_llm_content(c))
-
-# --- Helper to extract content from LLM responses (OpenAI or Gemini) ---
-def extract_llm_content(chunk):
-    choice = chunk.choices[0]
-    if hasattr(choice, 'delta') and hasattr(choice.delta, 'content'):
-        return choice.delta.content
-    elif hasattr(choice, 'content'):
-        return choice.content
-    return None
+    return gemini_chat(messages)
 
 # Update the main execution block to use the new sidebar
 if __name__ == "__main__":
