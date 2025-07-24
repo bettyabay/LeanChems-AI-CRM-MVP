@@ -1,7 +1,7 @@
 streamlit
 pytesseract
 python-dotenv
-supabase-py
+supabase
 ocrmypdf
 langchain
 pypdf
