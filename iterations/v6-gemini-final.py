@@ -19,8 +19,19 @@ import sys
 from tenacity import retry, stop_after_attempt, wait_exponential
 import re
 import openai
+import locale
 from PyPDF2 import PdfReader, PdfWriter
 from thefuzz import fuzz
+
+def format_currency_with_commas(amount):
+    """Format currency amounts with thousands separators"""
+    try:
+        # Set locale for thousands separator
+        locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+        return locale.format_string("%.2f", amount, grouping=True)
+    except:
+        # Fallback if locale is not available
+        return f"{amount:,.2f}"
 import datetime
 import pandas as pd
 import json
@@ -2321,95 +2332,89 @@ def render_choose_existing_ui(user_id):
 
     # Utility to overlay data on the static template PDF
 
-def generate_invoice_pdf_with_overlay(
+def generate_quote_with_items(
     template_path,
-    logo_path,
     output_path,
-    invoice_number,
-    invoice_date,
     customer_name,
-    customer_address,
     items,
-    notes,
-    bank_details,
-    contact_info,
-    buffer
+    start_y=380,   # moved down from 365 → 380 for better spacing below headers
+    row_height=20
 ):
-    # 1. Read the template to get size
-    template_reader = PdfReader(template_path)
-    template_page = template_reader.pages[0]
-    width = float(template_page.mediabox.width)
-    height = float(template_page.mediabox.height)
+    reader = PdfReader(template_path)
+    page = reader.pages[0]
+    width = float(page.mediabox.width)
+    height = float(page.mediabox.height)
 
-    # 2. Create overlay PDF in memory
     packet = io.BytesIO()
-    c = canvas.Canvas(packet, pagesize=(width, height))
-# Calculate positions first
-    customer_x = 60
-    customer_y = height // 2 + 80
+    can = canvas.Canvas(packet, pagesize=(width, height))
+    can.setFont("Helvetica", 12)
 
-    # --- Draw 'CUSTOMER' label above the customer name ---
-    c.setFont("Helvetica-Bold", 12)
-    label_x = 60  # Same left margin as customer name
-    label_y = customer_y + 35 # 20 pixels above customer name
-    c.drawString(label_x, label_y, "CUSTOMER :")
+    # --- CUSTOMER NAME ---
+    # Move further down and aligned left to start near "CUSTOMER :"
+    customer_x = 61.45  # aligned with "CUSTOMER :" start
+    customer_y_offset = 237.55 + 35  # increased from +20 to +35 to move it down a little more
+    can.drawString(customer_x, height - customer_y_offset, customer_name)
 
-    # --- Draw customer name further down into the empty area ---
-    c.setFont("Helvetica-Bold", 16)
-    customer_text = customer_name
-    customer_x = 60  # Left margin
-    customer_y = height // 2 + 80  # Lower on the page (adjust as needed)
-    c.drawString(customer_x, customer_y, customer_text)
+    # --- Column X positions with proper spacing to prevent overlap ---
+    x_name = 60      # Left-aligned with "NAME" header
+    x_unit_price = 180  # Right-aligned with "UNIT PRICE" header
+    x_quantity = 280  # Right-aligned with "QUANTITY" header  
+    x_vat = 380      # Right-aligned with "VAT" header
+    x_total = 480    # Right-aligned with "TOTAL PRICE" header
 
-    # --- Draw item table header below customer name, left aligned ---
-    c.setFont("Helvetica-Bold", 10)
-    table_y = customer_y - 40  # 40 pixels below customer name
-    col_xs = [60, 180, 280, 380, 480]
-    headers = ["NAME", "UNIT PRICE", "QUANTITY", "VAT", "TOTAL PRICE"]
-    for x, header in zip(col_xs, headers):
-        c.drawString(x, table_y, header)
-    c.setLineWidth(1)
-    c.roundRect(col_xs[0]-10, table_y-10, (col_xs[-1]+100)-(col_xs[0]-10), 25, 10, stroke=1, fill=0)
-
-    # --- Draw item table rows ---
-    c.setFont("Helvetica", 10)
-    row_y = table_y - 25
+    # --- Items table ---
+    y_position = start_y + 20  # moved down by 20pt to lower the table values
     for item in items:
-        c.drawString(col_xs[0], row_y, item['name'])
-        c.drawString(col_xs[1], row_y, str(item['unit_price']))
-        c.drawString(col_xs[2], row_y, str(item['quantity']))
-        c.drawString(col_xs[3], row_y, str(item['vat']))
-        c.drawString(col_xs[4], row_y, str(item['total_price']))
-        row_y -= 20
+        # Item name (left-aligned)
+        can.drawString(x_name, height - y_position, str(item["name"]))
+        
+        # Numbers (right-aligned with proper column widths to prevent overlap)
+        # Unit price - right align within a 80pt width
+        unit_price_text = str(item["unit_price"])
+        unit_price_width = can.stringWidth(unit_price_text, "Helvetica", 12)
+        unit_price_x = x_unit_price + 80 - unit_price_width
+        can.drawString(unit_price_x, height - y_position, unit_price_text)
+        
+        # Quantity - left align (changed from right align)
+        quantity_text = str(item["quantity"])
+        can.drawString(x_quantity, height - y_position, quantity_text)
+        
+        # VAT - right align within a 80pt width
+        vat_text = str(item["vat"])
+        vat_width = can.stringWidth(vat_text, "Helvetica", 12)
+        vat_x = x_vat + 80 - vat_width
+        can.drawString(vat_x, height - y_position, vat_text)
+        
+        # Total price - right align within a 100pt width
+        total_text = str(item["total_price"])
+        total_width = can.stringWidth(total_text, "Helvetica", 12)
+        total_x = x_total + 100 - total_width
+        can.drawString(total_x, height - y_position, total_text)
+        
+        y_position += row_height
 
-    c.save()
+    can.save()
+
     packet.seek(0)
     overlay_pdf = PdfReader(packet)
+    output = PdfWriter()
+    page.merge_page(overlay_pdf.pages[0])
+    output.add_page(page)
 
-    # 3. Merge overlay onto template
-    writer = PdfWriter()
-    base = template_reader.pages[0]
-    base.merge_page(overlay_pdf.pages[0])
-    writer.add_page(base)
-    if buffer is not None:
-        writer.write(buffer)
-        buffer.seek(0)
-        return buffer
-    elif output_path is not None:
-        # Ensure output directory exists
-        import os
-        output_dir = os.path.dirname(output_path)
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-        with open(output_path, "wb") as f:
-            writer.write(f)
-        return output_path
-    else:
-        raise ValueError("Either buffer or output_path must be provided.")
+    # Ensure output directory exists
+    import os
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    
+    with open(output_path, "wb") as f:
+        output.write(f)
 
 def render_quote_generation_ui(user_id):
     st.title("📝 Quote Generation")
     st.write("Generate a quote for a customer, including items you specify and deals from their interaction history.")
+
+
 
     # 1. Select customer
     customers_dict = get_all_customer_names()
@@ -2435,13 +2440,15 @@ def render_quote_generation_ui(user_id):
                 'qty': item_qty,
                 'price': item_price
             })
-            st.success(f"Added {item_name} (x{item_qty}) at {item_price:.2f} each.")
+            formatted_price = format_currency_with_commas(item_price)
+            st.success(f"Added {item_name} (x{item_qty}) at {formatted_price} each.")
             st.rerun()
     # Show current items
     if st.session_state['quote_items']:
         st.write("**Items in Quote:**")
         for idx, item in enumerate(st.session_state['quote_items']):
-            st.write(f"{idx+1}. {item['item']} - Qty: {item['qty']}, Price: {item['price']:.2f}")
+            formatted_price = format_currency_with_commas(item['price'])
+            st.write(f"{idx+1}. {item['item']} - Qty: {item['qty']}, Price: {formatted_price}")
         if st.button("Clear Items"):
             st.session_state['quote_items'] = []
             st.rerun()
@@ -2479,33 +2486,32 @@ def render_quote_generation_ui(user_id):
             total_price = round(unit_price * qty + vat, 2)
             items.append({
                 'name': item['item'],
-                'unit_price': f"{unit_price:.2f} ETB",
+                'unit_price': f"{format_currency_with_commas(unit_price)} ETB",
                 'quantity': f"{qty} KG",
-                'vat': f"{vat:.2f} ETB",
-                'total_price': f"{total_price:.2f} ETB"
+                'vat': f"{format_currency_with_commas(vat)} ETB",
+                'total_price': f"{format_currency_with_commas(total_price)} ETB"
             })
         notes = "We prioritize customer satisfaction. Our team of passionate skiers and snowboarders is dedicated to delivering exceptional service and ensuring your safety and enjoyment on the slopes."
         bank_details = "Beneficiary: Alhadi Maru Import and Export\nBank: Dashen Bank\nBank Branch: Bulgaria\nBank Account: 7981270984511"
         contact_info = "+251966274550"
         import io
-        buffer = io.BytesIO()
-        generate_invoice_pdf_with_overlay(
-            template_path="Kadisco PI (1).pdf",
-            logo_path="leanchems logo.png",
-            output_path=None,  # Not used
-            invoice_number=invoice_number,
-            invoice_date=invoice_date,
+        # Generate the quote PDF
+        safe_name = selected_customer_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+        output_path = f"temp_quote_{safe_name}.pdf"
+        generate_quote_with_items(
+            template_path="Kadisco PI.pdf",
+            output_path=output_path,
             customer_name=selected_customer_name,
-            customer_address=customer_address,
-            items=items,
-            notes=notes,
-            bank_details=bank_details,
-            contact_info=contact_info,
-            buffer=buffer
+            items=items
         )
+        
+        # Read the generated file and provide download
+        with open(output_path, "rb") as f:
+            pdf_data = f.read()
+        
         st.download_button(
             label="Download Quote PDF",
-            data=buffer.getvalue(),
+            data=pdf_data,
             file_name=f"quote_{selected_customer_name.replace(' ', '_')}.pdf",
             mime="application/pdf"
         )
