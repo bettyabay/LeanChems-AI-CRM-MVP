@@ -8,6 +8,7 @@ import PyPDF2
 import io
 from docx import Document
 import base64
+from datetime import datetime
 
 # Page config
 st.set_page_config(page_title="LeanChems PMS", layout="centered")
@@ -683,28 +684,62 @@ with tab_manage:
             pass
         st.error("You do not have permission to access Manage Products.")
     else:
-        # Filters
-        colf1, colf2, colf3 = st.columns([2, 2, 1])
+        # Enhanced Filters
+        st.subheader("📊 Filter Products")
+        colf1, colf2, colf3, colf4 = st.columns([2, 2, 2, 1])
         with colf1:
             filter_category = st.selectbox("Filter by Category", ["All"] + FIXED_CATEGORIES)
         with colf2:
-            search = st.text_input("Search by name/type", placeholder="Start typing...")
+            # Product Type Filter
+            all_product_types = []
+            try:
+                res = supabase.table("product_master").select("product_type").execute()
+                all_product_types = sorted(list(set([row.get("product_type") for row in (res.data or []) if row.get("product_type")])))
+            except Exception:
+                pass
+            filter_product_type = st.selectbox("Filter by Product Type", ["All"] + all_product_types)
         with colf3:
-            only_tds = st.checkbox("With TDS only", value=False)
+            # LeanChems Product Filter
+            filter_leanchems = st.selectbox("LeanChems Chemicals", ["All", "Yes", "No"])
+        with colf4:
+            # TDS Filter
+            filter_tds = st.selectbox("TDS Status", ["All", "With TDS", "Without TDS"])
+
+        # Search filter
+        search = st.text_input("Search by name/type", placeholder="Start typing...")
 
         products = fetch_products()
-        # Apply filters
+        # Apply enhanced filters
         filtered = []
         for p in products:
+            # Category filter
             if filter_category != "All" and p.get("category") != filter_category:
                 continue
+            # Product type filter
+            if filter_product_type != "All" and p.get("product_type") != filter_product_type:
+                continue
+            # LeanChems filter
+            if filter_leanchems != "All":
+                is_leanchems = p.get("is_leanchems_product", "No")
+                if filter_leanchems != is_leanchems:
+                    continue
+            # TDS filter
+            if filter_tds == "With TDS" and not p.get("tds_file_url"):
+                continue
+            if filter_tds == "Without TDS" and p.get("tds_file_url"):
+                continue
+            # Search filter
             if search:
                 if search.lower() not in (p.get("name", "").lower()) and \
                    search.lower() not in (p.get("product_type", "").lower()):
                     continue
-            if only_tds and not p.get("tds_file_url"):
-                continue
             filtered.append(p)
+
+        # Display filter summary
+        if filtered:
+            st.success(f"📋 Found {len(filtered)} products matching your filters")
+        else:
+            st.info("No products match the current filters.")
 
         if not filtered:
             st.info("No products match the current filters.")
@@ -723,6 +758,10 @@ with tab_manage:
                             cols = st.columns([3, 2, 2, 2])
                             with cols[0]:
                                 st.write(f"• {prod.get('name')}")
+                                # Show LeanChems status
+                                leanchems_status = prod.get("is_leanchems_product", "No")
+                                if leanchems_status == "Yes":
+                                    st.caption("🏢 LeanChems Product")
                             with cols[1]:
                                 st.write("TDS: "+ ("✅" if prod.get("tds_file_url") else "❌"))
                             with cols[2]:
@@ -740,7 +779,54 @@ with tab_manage:
                                     # product type: choose existing or new free text
                                     etype = st.text_input("Product Type", value=prod.get("product_type", ""), key=f"t_{pid}")
                                     edesc = st.text_area("Description", value=prod.get("description") or "", key=f"d_{pid}")
-                                    new_tds = st.file_uploader("Replace TDS (optional)", type=ALLOWED_FILE_EXTS, key=f"f_{pid}")
+                                    
+                                    # LeanChems Product Status
+                                    eleanchems = st.selectbox(
+                                        "Is it LeanChems legacy/existing/coming product?",
+                                        ["Yes", "No"],
+                                        index=0 if prod.get("is_leanchems_product") == "Yes" else 1,
+                                        key=f"leanchems_{pid}"
+                                    )
+                                    
+                                    # Multiple TDS Files Upload (Manage Products only)
+                                    st.markdown("---")
+                                    st.subheader("📎 Multiple TDS Files")
+                                    st.info("💡 You can upload multiple TDS files for this product. Each file will be stored separately.")
+                                    
+                                    # Show existing TDS files
+                                    existing_tds_files = prod.get("additional_tds_files", [])
+                                    if existing_tds_files:
+                                        st.write("**Current TDS Files:**")
+                                        for i, tds_file in enumerate(existing_tds_files):
+                                            col_tds1, col_tds2, col_tds3 = st.columns([3, 1, 1])
+                                            with col_tds1:
+                                                st.write(f"📄 {tds_file.get('name', 'Unknown file')}")
+                                            with col_tds2:
+                                                st.write(f"{tds_file.get('size', 0) / 1024:.1f} KB")
+                                            with col_tds3:
+                                                if st.button(f"🗑️ Remove", key=f"remove_tds_{pid}_{i}"):
+                                                    # Remove file from list
+                                                    existing_tds_files.pop(i)
+                                                    # Update product
+                                                    try:
+                                                        update_product(pid, {"additional_tds_files": existing_tds_files})
+                                                        st.success("File removed successfully!")
+                                                        st.rerun()
+                                                    except Exception as e:
+                                                        st.error(f"Failed to remove file: {e}")
+                                    
+                                    # Upload new TDS files
+                                    new_tds_files = st.file_uploader(
+                                        "Upload Additional TDS Files (optional)", 
+                                        type=ALLOWED_FILE_EXTS, 
+                                        accept_multiple_files=True,
+                                        key=f"multi_tds_{pid}"
+                                    )
+                                    
+                                    # Replace main TDS (single file)
+                                    st.markdown("---")
+                                    st.subheader("🔄 Replace Main TDS")
+                                    new_tds = st.file_uploader("Replace Main TDS (optional)", type=ALLOWED_FILE_EXTS, key=f"f_{pid}")
 
                                     # Actions
                                     ac1, ac2 = st.columns(2)
@@ -759,9 +845,35 @@ with tab_manage:
                                                     "category": ecat,
                                                     "product_type": etype.strip() or prod.get("product_type"),
                                                     "description": edesc or None,
+                                                    "is_leanchems_product": eleanchems,
                                                 }
 
-                                                # TDS upload if provided
+                                                # Handle multiple TDS files upload
+                                                if new_tds_files:
+                                                    additional_files = existing_tds_files.copy()
+                                                    for uploaded_file in new_tds_files:
+                                                        # Validate file
+                                                        okf, msgf = validate_file(uploaded_file)
+                                                        if not okf:
+                                                            st.error(f"File {uploaded_file.name}: {msgf}")
+                                                            continue
+                                                        
+                                                        # Upload to Supabase
+                                                        try:
+                                                            url, fname, fsize, ftype = upload_tds_to_supabase(uploaded_file, pid)
+                                                            additional_files.append({
+                                                                "url": url,
+                                                                "name": fname,
+                                                                "size": fsize,
+                                                                "type": ftype,
+                                                                "uploaded_at": datetime.utcnow().isoformat() + "Z"
+                                                            })
+                                                        except Exception as e:
+                                                            st.error(f"Failed to upload {uploaded_file.name}: {e}")
+                                                    
+                                                    updates["additional_tds_files"] = additional_files
+
+                                                # TDS upload if provided (main TDS)
                                                 if new_tds is not None:
                                                     okf, msgf = validate_file(new_tds)
                                                     if not okf:
@@ -782,6 +894,7 @@ with tab_manage:
                                                     update_product(pid, updates)
                                                     st.success("✅ Updated")
                                                     st.session_state.pop(f"editing_{pid}", None)
+                                                    st.rerun()
                                                 except Exception as e:
                                                     st.error(f"Failed to update: {e}")
 
@@ -884,12 +997,20 @@ with tab_view:
                             st.markdown(f"**{prod.get('name')}**")
                             if prod.get("description"):
                                 st.caption(prod.get("description"))
+                            # Show LeanChems status
+                            leanchems_status = prod.get("is_leanchems_product", "No")
+                            if leanchems_status == "Yes":
+                                st.caption("🏢 LeanChems Product")
                         
                         with col2:
                             # TDS status and download
                             if prod.get("tds_file_url"):
                                 st.markdown("📄 **TDS:** Available")
                                 st.markdown(f"[Download TDS]({prod.get('tds_file_url')})")
+                                # Show additional TDS files count
+                                additional_files = prod.get("additional_tds_files", [])
+                                if additional_files:
+                                    st.caption(f"📎 +{len(additional_files)} additional files")
                             else:
                                 st.markdown("📄 **TDS:** Not available")
                         
@@ -911,13 +1032,27 @@ with tab_view:
                                 if prod.get("tds_file_url"):
                                     col_tds1, col_tds2 = st.columns(2)
                                     with col_tds1:
-                                        st.write(f"**File:** {prod.get('tds_file_name')}")
+                                        st.write(f"**Main TDS File:** {prod.get('tds_file_name')}")
                                         st.write(f"**Size:** {prod.get('tds_file_size', 0) / 1024:.1f} KB")
                                     with col_tds2:
                                         st.write(f"**Type:** {prod.get('tds_file_type')}")
-                                        st.markdown(f"[📥 Download TDS]({prod.get('tds_file_url')})")
+                                        st.markdown(f"[📥 Download Main TDS]({prod.get('tds_file_url')})")
                                 else:
-                                    st.write("No TDS file uploaded")
+                                    st.write("No main TDS file uploaded")
+                                
+                                # Additional TDS Files
+                                additional_files = prod.get("additional_tds_files", [])
+                                if additional_files:
+                                    st.markdown("**Additional TDS Files:**")
+                                    for i, tds_file in enumerate(additional_files):
+                                        col_add1, col_add2 = st.columns([3, 1])
+                                        with col_add1:
+                                            st.write(f"📄 {tds_file.get('name', 'Unknown file')}")
+                                            if tds_file.get('uploaded_at'):
+                                                st.caption(f"Uploaded: {tds_file.get('uploaded_at')[:19].replace('T', ' ')}")
+                                        with col_add2:
+                                            st.write(f"{tds_file.get('size', 0) / 1024:.1f} KB")
+                                            st.markdown(f"[📥 Download]({tds_file.get('url')})")
                                 
                                 # Version History
                                 st.markdown("**Version History**")
