@@ -464,7 +464,7 @@ def generate_customer_id():
     return str(uuid.uuid4())
 
 def generate_display_id():
-    """Generate a human-readable customer ID in format LC-YYYY-CUST-XXXX"""
+    """Generate a human-readable customer ID in format LL-YYYY-CUST-XXXX"""
     year = datetime.datetime.now().year
     
     # Get all customer IDs to find the highest number
@@ -474,8 +474,8 @@ def generate_display_id():
     if response.data:
         for customer in response.data:
             display_id = customer.get('display_id', '')
-            # Check if the ID matches our format (LC-YYYY-CUST-XXXX)
-            if isinstance(display_id, str) and display_id.startswith(f'LC-{year}-CUST-'):
+            # Check if the ID matches our format (LL-YYYY-CUST-XXXX)
+            if isinstance(display_id, str) and display_id.startswith(f'LL-{year}-CUST-'):
                 try:
                     num = int(display_id.split('-')[-1])
                     max_num = max(max_num, num)
@@ -484,7 +484,7 @@ def generate_display_id():
     
     # Increment the highest number found
     new_num = max_num + 1
-    return f"LC-{year}-CUST-{new_num:04d}"
+    return f"LL-{year}-CUST-{new_num:04d}"
 
 def find_similar_customers(customer_name: str, threshold: int = 80):
     """Find similar customer names using fuzzy matching"""
