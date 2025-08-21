@@ -2999,7 +2999,7 @@ def render_quote_generation_ui(user_id):
         safe_name = selected_customer_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
         output_path = f"temp_quote_{safe_name}.pdf"
         generate_quote_with_items(
-            template_path="Kadisco PI.pdf",
+            template_path="../assets/Lean_Quotatation_samples.pdf",
             output_path=output_path,
             customer_name=selected_customer_name,
             items=items
