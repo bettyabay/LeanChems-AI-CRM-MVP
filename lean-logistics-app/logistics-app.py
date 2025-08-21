@@ -42,8 +42,8 @@ def search_customer_import_history(customer_name: str, debug=False):
     Returns import data if found, None otherwise.
     """
     try:
-        # Read the Excel file (assets folder located alongside this app)
-        excel_path = Path(__file__).resolve().parent / "assets" / "Import Data - RAG.xlsx"
+        # Read the Excel file (assets folder located in parent directory)
+        excel_path = Path(__file__).resolve().parent.parent / "assets" / "Import Data - RAG.xlsx"
         
         if debug:
             st.info(f"🔍 Looking for import history file at: {excel_path}")
@@ -2743,8 +2743,8 @@ with st.sidebar:
     st.sidebar.title(" AI Powered CRM Chat ")
     # Add the logo here with error handling
     try:
-        st.image("assets/LeanLogistiQ_logo.png", width=150)
-        st.image("assets/Mitchell.jpg", width=150)
+        st.image("../assets/LeanLogistiQ_logo.png", width=150)
+        st.image("../assets/Mitchell.jpg", width=150)
     except:
         st.markdown("")
     if not st.session_state.authenticated:
