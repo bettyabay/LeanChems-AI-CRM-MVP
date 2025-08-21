@@ -47,7 +47,7 @@ def search_customer_import_history(customer_name: str, debug=False):
         import openpyxl
         
         # Read the Excel file (assets folder located in parent directory)
-        excel_path = Path(__file__).resolve().parent.parent / "assets" / "Import Data - RAG.xlsx"
+        excel_path = Path("assets") / "Import Data - RAG.xlsx"
         
         if debug:
             st.info(f"🔍 Looking for import history file at: {excel_path}")
@@ -2999,7 +2999,7 @@ def render_quote_generation_ui(user_id):
         safe_name = selected_customer_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
         output_path = f"temp_quote_{safe_name}.pdf"
         generate_quote_with_items(
-            template_path="../assets/Lean_Quotatation_samples.pdf",
+            template_path="assets/Lean_Quotatation_samples.pdf",
             output_path=output_path,
             customer_name=selected_customer_name,
             items=items
@@ -3051,9 +3051,10 @@ with st.sidebar:
     st.sidebar.title(" AI Powered CRM Chat ")
     # Add the logo here with error handling
     try:
-        st.image("../assets/LeanLogistiQ_logo.png", width=150)
-        st.image("../assets/Mitchell.jpg", width=150)
-    except:
+        st.image("assets/LeanLogistiQ_logo.png", width=150)
+        st.image("assets/Mitchell.jpg", width=150)
+    except Exception as e:
+        st.error(f"Error loading images: {str(e)}")
         st.markdown("")
     if not st.session_state.authenticated:
         tab1, tab2 = st.tabs(["Login", "Sign Up"])
