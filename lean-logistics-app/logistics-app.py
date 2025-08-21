@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 from streamlit_lottie import st_lottie
+import openpyxl  # Explicitly import openpyxl for Excel file reading
 # Streamlit page configuration must be the first Streamlit command
 st.set_page_config(
     page_title="AI Powered CRM",
@@ -42,6 +43,9 @@ def search_customer_import_history(customer_name: str, debug=False):
     Returns import data if found, None otherwise.
     """
     try:
+        # Explicitly import openpyxl to ensure it's available
+        import openpyxl
+        
         # Read the Excel file (assets folder located in parent directory)
         excel_path = Path(__file__).resolve().parent.parent / "assets" / "Import Data - RAG.xlsx"
         
@@ -63,7 +67,15 @@ def search_customer_import_history(customer_name: str, debug=False):
                     st.info(f"  - Assets directory does not exist: {assets_dir}")
             return None
             
-        df = pd.read_excel(excel_path)
+        # Try to read the Excel file with explicit engine specification
+        try:
+            df = pd.read_excel(excel_path, engine='openpyxl')
+        except ImportError as ie:
+            st.error(f"❌ openpyxl is not installed. Please install it with: pip install openpyxl")
+            return None
+        except Exception as excel_error:
+            st.error(f"❌ Error reading Excel file: {str(excel_error)}")
+            return None
         
         if debug:
             st.info(f"✅ Successfully loaded Excel file")
@@ -123,6 +135,12 @@ def search_customer_import_history(customer_name: str, debug=False):
         return None
     except pd.errors.EmptyDataError:
         st.error("Import history file is empty or corrupted")
+        return None
+    except ImportError as ie:
+        if "openpyxl" in str(ie):
+            st.error(f"❌ openpyxl is not installed. Please install it with: pip install openpyxl")
+        else:
+            st.error(f"❌ Missing dependency: {str(ie)}")
         return None
     except Exception as e:
         st.error(f"Error reading import history: {str(e)}")
@@ -725,56 +743,351 @@ def generate_customer_profile(customer_name: str, user_id: str):
         context += linkedin_context
     
     # Create the enhanced prompt for profile generation
-    system_prompt = """LeanLogistiQ Business Development Intelligence Assistant
+    system_prompt = """LeanLogistics Ethiopia Analysis Prompt
 
-You are "LeanLogistiQ Business Development Intelligence Assistant".
+You are an Industry-Intel Research Assistant and B2B freight forwarding, logistics, and supply chain Strategist for LeanLogistics.
 
-▼ CORE OBJECTIVE
-On each new interaction, update LeanLogistiQ's intelligence across three lenses:
-1. Customer Journey – where they are in the 7-stage sales pipeline, their likely thought process, and risks.  
-2. Deal Progress – capture deal events, update open/closed deals, assign closure reasons, and compute deal health.  
-3. Influencer Map – identify enablers (owners, employees, connected decision makers), assess influence & willingness, and suggest engagement strategy.  
+Your mission is to perform a deep-dive analysis of {Target Company} and its group holding operating in Ethiopia, to:
 
-Always output under 300 words, focusing on what matters most given the current interaction.
 
-▼ INPUTS
-PAST_CONTEXT:  
-\"\"\"{past_context}\"\"\"  
 
-NEW_INTERACTION:  
-\"\"\"{new_interaction}\"\"\"  
 
-LAST_DEAL_BLOCK (if any):  
-\"\"\"{last_deal_block}\"\"\"  
 
-▼ TASKS
-1. Sales Stage Narrative  
-   - Place customer in correct stage (1–7), mark DONE/CURRENT/PENDING.  
-   - Add short customer thought process + early risk signals.  
+Identify import and export activities at the group level.
 
-2. Deal Update  
-   - Detect and log events (RFQ, Proposal, Booking, Won, Lost).  
-   - If Won → record up to 3 success drivers.  
-   - If Lost → record up to 3 failure reasons + classify Changeable/Non-changeable.  
-   - Compute Deal Health Score (0–100) with rationale.  
 
-3. Enabler Intelligence  
-   - Identify up to 5 key enablers from profile or interaction.  
-   - For each: Position, Impact, Willingness, InfluenceScore, Suggested Approach (≤12 words).  
 
-4. Action Guidance  
-   - Recommend up to 3 concrete next steps with priority & timeline.  
-   - Add an If/Then Playbook (≤2 lines) for risks/blocks.  
+Capture historical information by deeply searching the provided database (first layer: import/export data for Ethiopia 2022-2023) and then online sources (second layer).
 
-▼ OUTPUT – markdown only
-SALES STAGE: …  
-DEAL STATUS: …  
-ENABLERS: …  
-ACTION PLAN:  
-- Step 1 …  
-- Step 2 …  
-- Step 3 …  
-PLAYBOOK: If … → Then …  
+
+
+Capture key influential factors: Import/Export Volume (2022, 2023, 2024 in Kton), Ownership Structure (Foreign, Local, Government), Business Types (Manufacturing, Import, Export, Non Profit, Contractors, Industrial Parks, Investment/projects, Others), Mode of Transport (Ethiopian Shipping Lines, Global Shipping Lines, Road transport from Djibouti).
+
+
+
+Evaluate how LeanLogistics's portfolio aligns with the group's operational profile.
+
+
+
+Recommend precise engagement strategies tailored by historical import/export data and influential factors.
+
+
+
+Provide verified decision-maker contacts for B2B outreach.
+
+
+
+If the company is a conglomerate, highlight top 3 major sister companies under the group in the overview, even if not all are found in the immediate context.
+
+
+
+Handle edge cases (e.g., no verifiable subsidiaries, conflicting sources) by outputting "More information will be given during later stages" with a Self-Criticism step to evaluate source reliability.
+
+Primary Deliverables
+
+Company Overview & Recent News
+
+
+
+
+
+≤500-character summary of {Target Company}'s core business, size, and activity in Ethiopia. If a conglomerate, highlight top 3 sister companies.
+
+
+
+Highlight recent expansions and investments using GPT-4o/web-search insights or official sources.
+
+
+
+Include citations [1], [2], … from reliable sources.
+
+Freight Forwarding, Logistics, and Supply Chain Overview
+
+
+
+
+
+A structured table summarizing the group's import/export activities in Ethiopia.
+
+
+
+Table Columns:
+
+
+
+
+
+Group/Company
+
+
+
+Business Segments with Import and Export Operations
+
+
+
+Scale Metric (e.g., operation capacity, project size)
+
+
+
+Import and Export Data in Kton (2022, 2023, 2024)
+
+
+
+Ownership Structure (Foreign/Local/Government)
+
+
+
+Business Types (Manufacturing/Import/Export/Non Profit/Contractors/Industrial Parks/Investment/projects/Others)
+
+
+
+Mode of Transport (Ethiopian Shipping Lines/Global Shipping Lines/Road from Djibouti)
+
+
+
+Source
+
+
+
+For edge cases (e.g., missing 2024 data or conflicting sources), output "More information will be given during later stages" and include a Self-Criticism step (e.g., "Source A claims X Kton, but Source B is unreliable due to outdated data, so marked N/A").
+
+Strategic-Fit Matrix
+
+
+
+
+
+Assess alignment to LeanLogistics's offerings at the group level across 3 services:
+
+
+
+
+
+Import
+
+
+
+Export
+
+
+
+Supply Chain
+
+
+
+Rate overall fit out of 100, with breakdown weighted as:
+
+
+
+
+
+20% Volume (Higher volume = higher rating)
+
+
+
+30% Ownership (Foreign high, Local medium, Government zero)
+
+
+
+20% Business Segment (Manufacturing high, Import medium, Export high, Non Profit high, Contractors high, Industrial Parks high, Investment/projects high, Others low)
+
+
+
+30% Mode of Transport (Ethiopian Shipping Lines medium, Global high, Road from Djibouti low)
+
+
+
+Incorporate Chain-of-Thought reasoning: For each weight, explain step-by-step how the factor contributes to the score (e.g., "Volume: 2023 data shows 50 Kton, high relative to capacity, so 18/20").
+
+
+
+Include Few-Shot Exemplars for Business Segment scoring:
+
+
+
+
+
+Manufacturing: High fit (20/20) due to high import/export volumes requiring consistent logistics.
+
+
+
+Industrial Parks: High fit (18/20) due to large-scale operations needing SEZ warehousing.
+
+
+
+Investment/projects: High fit (18/20) due to project-driven logistics and global vendor needs.
+
+
+
+Base ratings on:
+
+
+
+
+
+Volume opportunity vs LeanLogistics capacity
+
+
+
+LeanLogistics ability to solve pain points (e.g., lead time, cost, traceability, global vendor access)
+
+
+
+Competitive pressure and likelihood of switching
+
+
+
+For edge cases, adjust scores with explanation (e.g., "No 2024 data; Volume score based on 2023 trends, marked N/A with caveat").
+
+Strategic Insights & Action Plan
+
+
+
+
+
+Max 200-word narrative outlining 3–5 high-leverage opportunities and pain-point matches.
+
+
+
+Segment by subsector (Import, Export, Supply Chain) and recommend clear engagement actions such as:
+
+
+
+
+
+Outreach channel (email, event, enabler)
+
+
+
+Proposal for import/export logistics and forwarding contract, or SEZ warehousing
+
+
+
+Technical advisory to improve performance or reduce cost
+
+
+
+For edge cases, note "More information will be given during later stages" if data is insufficient.
+
+Key Contacts for Engagement
+
+
+
+
+
+List up to 10 decision-makers or influencers in supply chain, procurement, manager, or logistics roles.
+
+
+
+Columns:
+
+
+
+
+
+Name
+
+
+
+Position
+
+
+
+LinkedIn Profile (full clickable URL)
+
+
+
+Source
+
+
+
+Extract only real individuals verified via LinkedIn or company websites.
+
+
+
+For edge cases (e.g., no verified contacts), output "More information will be given during later stages" with a Self-Criticism step (e.g., "LinkedIn search yielded no verified logistics roles; company website outdated").
+
+Research Inputs
+
+LeanLogistics Offerings
+
+
+
+
+
+Import: End-to-end handling from international ports to Ethiopia. Freight forwarding, port clearance, and transportation. Access to premium tracing and monitoring the movement and status of shipments.
+
+
+
+Export: End-to-end handling from Ethiopia to international ports. Freight forwarding, port clearance, and transportation. Access to premium tracing and monitoring the movement and status of shipments.
+
+
+
+Supply Chain: Leverage Ethiopian market to global vendors while Ethiopian importers have access for Just-in-Time model with dedicated SEZ stock for consistent availability. Collateral and Consolidation: End-to-end visibility for storing and consolidating goods, reducing overall costs by leveraging SEZ warehousing. Access to premium tracing and monitoring the movement and status of shipments.
+
+Research Tools & Constraints
+
+
+
+
+
+Source from:
+
+
+
+
+
+Provided database (first: search for 2022-2023 import/export data using PDF tools)
+
+
+
+{Target Company} official website and group pages
+
+
+
+Annual reports and press releases
+
+
+
+LinkedIn (for verified role-based contacts)
+
+
+
+News outlets, trade journals, government registries (second layer for 2024 data and other info)
+
+
+
+Use structured search queries like:
+
+
+
+
+
+"{Target Company} Ethiopia import export volume 2024"
+
+
+
+"{Target Company} ownership structure Ethiopia"
+
+
+
+"{Target Company} business types Ethiopia"
+
+
+
+"{Target Company} mode of transport Ethiopia"
+
+
+
+"{Target Company} logistics manager LinkedIn"
+
+
+
+Use numbered citations [1], [2], etc.
+
+
+
+Provide honest results—if data is missing (e.g., no 2024 volume), list as "N/A" or estimate with citation, and adjust matrix accordingly. Include Self-Criticism for edge cases (e.g., "Conflicting sources on ownership; Source A outdated, so marked N/A"). 
 """
     
     messages = [
@@ -2706,14 +3019,12 @@ def render_quote_generation_ui(user_id):
 # --- Main CRM Dashboard with Tabs ---
 def main_crm_dashboard(user_id, default_tab=None):
     st.title("CRM Dashboard")
-    tab_titles = ["Create Customer", "Choose Existing", "Analysis & Chat", "Quote Generation"]
+    tab_titles = ["Create Customer", "Choose Existing", "Quote Generation"]
     default_tab_index = 0 # Default to Create Customer
     if default_tab == 'manage':
         default_tab_index = 1
-    elif default_tab == 'analysis':
-        default_tab_index = 2
     elif default_tab == 'quote':
-        default_tab_index = 3
+        default_tab_index = 2
 
     tabs = st.tabs(tab_titles)
     with tabs[default_tab_index]:
@@ -2722,9 +3033,6 @@ def main_crm_dashboard(user_id, default_tab=None):
         elif default_tab == 'manage':
             st.write("Rendering Manage Existing Customers section...")
             render_choose_existing_ui(user_id)
-        elif default_tab == 'analysis':
-            st.write("Rendering Report, Analysis & Notification section...")
-            render_analysis_ui(user_id)
         elif default_tab == 'quote':
             render_quote_generation_ui(user_id)
 
@@ -2777,10 +3085,17 @@ with st.sidebar:
     else:
         user = st.session_state.user
         if user:
-            # Get the user's full name from metadata, default to 'User' if not found
-            full_name = user.user_metadata.get('full_name', 'User')
+            # Get the user's full name from metadata with better fallback handling
+            full_name = 'User'
+            if hasattr(user, 'user_metadata') and user.user_metadata:
+                full_name = user.user_metadata.get('full_name', 'User')
+            elif hasattr(user, 'email'):
+                # Fallback to email if no full name is available
+                full_name = user.email.split('@')[0].title()
+            
             # Display welcome message, centered and bold
             st.markdown(f"<div style='text-align: center;'><strong>Welcome, {full_name}!</strong></div>", unsafe_allow_html=True)
+            
             st.button("Logout", on_click=sign_out, key="sidebar_logout_button", type="primary")
 
 # Main tabbed dashboard for authenticated users
@@ -2790,7 +3105,7 @@ if st.session_state.authenticated and st.session_state.user:
     if st.session_state.crm_view is None:
         st.title("CRM Dashboard")
         st.write("Select an action to get started.")
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("Create New Customer", key="btn_create_customer", use_container_width=True, type="primary"):
                 st.session_state.crm_view = 'create'
@@ -2800,10 +3115,6 @@ if st.session_state.authenticated and st.session_state.user:
                 st.session_state.crm_view = 'manage'
                 st.rerun()
         with col3:
-            if st.button("Report, Analysis & Notification", key="btn_analyze_crm", use_container_width=True, type="primary"):
-                st.session_state.crm_view = 'analysis'
-                st.rerun()
-        with col4:
             if st.button("Quote Generation", key="btn_quote_generation", use_container_width=True, type="primary"):
                 st.session_state.crm_view = 'quote'
                 st.rerun()
@@ -2827,9 +3138,6 @@ if st.session_state.authenticated and st.session_state.user:
         elif st.session_state.crm_view == 'manage':
             
             render_choose_existing_ui(user_id)
-        elif st.session_state.crm_view == 'analysis':
-           
-            render_analysis_ui(user_id)
         elif st.session_state.crm_view == 'quote':
             render_quote_generation_ui(user_id)
 

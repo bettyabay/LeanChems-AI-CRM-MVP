@@ -1,3 +1,6 @@
-.LeanVenvL1
+.venv
+venv/
 
 documents/
+
+.env
