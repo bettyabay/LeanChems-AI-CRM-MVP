@@ -22,6 +22,11 @@ import openai
 import locale
 from PyPDF2 import PdfReader, PdfWriter
 from thefuzz import fuzz
+import telegram
+import asyncio
+import schedule
+import threading
+import time
 
 def format_currency_with_commas(amount):
     """Format currency amounts with thousands separators"""
@@ -221,6 +226,54 @@ GEMINI_EMBED_MODEL = os.getenv('GEMINI_EMBED_MODEL', 'text-embedding-004')
 GEMINI_CHAT_URL = f'https://generativelanguage.googleapis.com/v1/models/{GEMINI_CHAT_MODEL}:generateContent'
 GEMINI_EMBED_URL = f'https://generativelanguage.googleapis.com/v1/models/{GEMINI_EMBED_MODEL}:embedContent'
 
+# --- Telegram Notification Configuration ---
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', None)
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', None)
+NOTIFICATION_ENABLED = os.getenv('NOTIFICATION_ENABLED', 'false').lower() == 'true'
+
+# --- Notification Test UI Access Control ---
+def can_show_notification_test_ui():
+    try:
+        # Global on/off flag (default true for dev convenience)
+        flag = os.getenv('NOTIFICATION_TEST_UI', 'true').lower() == 'true'
+        if not flag:
+            return False
+
+        # Optional allow-lists
+        allowed_env = os.getenv('NOTIFICATION_TEST_ALLOWED_EMAILS', '')
+        manager_emails_env = os.getenv('MANAGER_EMAILS', '')
+        manager_domain = (os.getenv('MANAGER_DOMAIN') or '').strip().lower()
+
+        allowed_set = {e.strip().lower() for e in allowed_env.split(',') if e.strip()}
+        manager_set = {e.strip().lower() for e in manager_emails_env.split(',') if e.strip()}
+
+        # If no constraints provided, show by default
+        if not allowed_set and not manager_set and not manager_domain:
+            return True
+
+        # Check current user email if available
+        user = st.session_state.get('user') if 'user' in st.session_state else None
+        user_email = None
+        try:
+            if user:
+                user_email = getattr(user, 'email', None) or (user.user_metadata.get('email') if getattr(user, 'user_metadata', None) else None)
+        except Exception:
+            user_email = None
+
+        if not user_email:
+            return False
+
+        ue = user_email.strip().lower()
+        if ue in allowed_set or ue in manager_set:
+            return True
+        if manager_domain and ue.endswith('@' + manager_domain):
+            return True
+
+        return False
+    except Exception:
+        # If anything goes wrong, default to safe: hide
+        return False
+
 def gemini_chat(messages):
     """Call Gemini chat API with OpenAI-style messages."""
     if not GEMINI_API_KEY:
@@ -290,6 +343,230 @@ def gemini_embed(text):
     except Exception as e:
         st.error(f"Unexpected error in gemini_embed: {str(e)}")
         raise
+
+# --- Telegram Notification Functions ---
+async def send_telegram_message(message: str):
+    """Send a message via Telegram bot"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram bot token or chat ID not configured")
+        return False
+    
+    try:
+        bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode='Markdown')
+        return True
+    except Exception as e:
+        print(f"Error sending Telegram message: {str(e)}")
+        return False
+
+def send_telegram_message_sync(message: str):
+    """Synchronous wrapper for sending Telegram messages"""
+    try:
+        asyncio.run(send_telegram_message(message))
+        return True
+    except Exception as e:
+        print(f"Error in sync Telegram send: {str(e)}")
+        return False
+
+def generate_daily_deal_summary():
+    """Generate a daily summary of all deals for Telegram notification"""
+    try:
+        # Get all customers and their interactions
+        customers = get_all_customer_data()
+        
+        if not customers:
+            return "No customers found in the system."
+        
+        # Collect deal information from all customers
+        all_deals = []
+        total_customers = len(customers)
+        
+        for customer in customers:
+            customer_name = customer.get('customer_name', 'Unknown')
+            interactions = customer.get('interaction_metadata', [])
+            
+            if interactions:
+                # Get the latest interaction
+                latest_interaction = interactions[-1]
+                latest_output = latest_interaction.get('output', '')
+                
+                # Extract deal information from the output
+                if 'CURRENT DEALS:' in latest_output:
+                    deals_section = latest_output.split('CURRENT DEALS:')[1].split('CLOSED DEALS:')[0] if 'CLOSED DEALS:' in latest_output else latest_output.split('CURRENT DEALS:')[1]
+                    
+                    # Parse deals from the table
+                    lines = deals_section.strip().split('\n')
+                    for line in lines:
+                        if '|' in line and 'Deal_ID' not in line and '---' not in line:
+                            parts = [part.strip() for part in line.split('|')]
+                            if len(parts) >= 6:
+                                deal_id = parts[1]
+                                product = parts[2]
+                                qty = parts[3]
+                                price = parts[4]
+                                stage = parts[5]
+                                progress = parts[6] if len(parts) > 6 else 'N/A'
+                                
+                                all_deals.append({
+                                    'customer': customer_name,
+                                    'deal_id': deal_id,
+                                    'product': product,
+                                    'qty': qty,
+                                    'price': price,
+                                    'stage': stage,
+                                    'progress': progress
+                                })
+        
+        # Generate the summary message
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        message = f"*📊 LeanChems CRM Daily Deal Summary*\n"
+        message += f"*Date:* {today}\n\n"
+        
+        if all_deals:
+            message += f"*Active Deals:* {len(all_deals)}\n"
+            message += f"*Total Customers:* {total_customers}\n\n"
+            
+            # Group deals by stage
+            open_deals = [deal for deal in all_deals if deal['stage'] in ['Open', 'InProcess']]
+            won_deals = [deal for deal in all_deals if deal['stage'] == 'Won']
+            lost_deals = [deal for deal in all_deals if deal['stage'] == 'Lost']
+            
+            if open_deals:
+                message += "*🟢 Open Deals:*\n"
+                for deal in open_deals[:5]:  # Show top 5 open deals
+                    message += f"• {deal['customer']} - {deal['product']} ({deal['qty']}) - {deal['stage']}\n"
+                if len(open_deals) > 5:
+                    message += f"• ... and {len(open_deals) - 5} more\n"
+                message += "\n"
+            
+            if won_deals:
+                message += "*✅ Won Deals:*\n"
+                for deal in won_deals[:3]:  # Show top 3 won deals
+                    message += f"• {deal['customer']} - {deal['product']} ({deal['qty']})\n"
+                message += "\n"
+            
+            if lost_deals:
+                message += "*❌ Lost Deals:*\n"
+                for deal in lost_deals[:3]:  # Show top 3 lost deals
+                    message += f"• {deal['customer']} - {deal['product']} ({deal['qty']})\n"
+                message += "\n"
+            
+            # Add action items
+            message += "*🎯 Today's Action Items:*\n"
+            if open_deals:
+                message += "• Follow up on open deals\n"
+                message += "• Send quotes for pending requests\n"
+                message += "• Schedule customer meetings\n"
+            else:
+                message += "• Focus on lead generation\n"
+                message += "• Review customer profiles\n"
+                message += "• Plan marketing activities\n"
+        else:
+            message += "*No active deals found.*\n\n"
+            message += "*🎯 Today's Action Items:*\n"
+            message += "• Focus on lead generation\n"
+            message += "• Review customer profiles\n"
+            message += "• Plan marketing activities\n"
+        
+        message += "\n*💡 Tip:* Check the CRM dashboard for detailed insights and analytics."
+        
+        return message
+        
+    except Exception as e:
+        return f"Error generating daily summary: {str(e)}"
+
+def send_daily_notification():
+    """Send daily morning notification with deal summary"""
+    if not NOTIFICATION_ENABLED:
+        print("Notifications are disabled")
+        return
+    
+    try:
+        summary = generate_daily_deal_summary()
+        success = send_telegram_message_sync(summary)
+        
+        if success:
+            print(f"Daily notification sent successfully at {datetime.datetime.now()}")
+        else:
+            print(f"Failed to send daily notification at {datetime.datetime.now()}")
+            
+    except Exception as e:
+        print(f"Error in daily notification: {str(e)}")
+
+def send_deal_update_notification(customer_name: str, deal_info: str):
+    """Send immediate notification when a deal is updated"""
+    if not NOTIFICATION_ENABLED:
+        return False
+    
+    try:
+        message = f"*🔄 Deal Update Alert*\n\n"
+        message += f"*Customer:* {customer_name}\n"
+        message += f"*Time:* {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        message += f"*Update Details:*\n{deal_info}\n\n"
+        message += f"*💡 Action Required:* Check the CRM dashboard for full details."
+        
+        success = send_telegram_message_sync(message)
+        if success:
+            print(f"Deal update notification sent for {customer_name}")
+        else:
+            print(f"Failed to send deal update notification for {customer_name}")
+        return success
+    except Exception as e:
+        print(f"Error sending deal update notification: {str(e)}")
+        return False
+
+def send_new_customer_notification(customer_name: str, customer_id: str):
+    """Send notification when a new customer is created"""
+    if not NOTIFICATION_ENABLED:
+        return False
+    
+    try:
+        message = f"*🆕 New Customer Alert*\n\n"
+        message += f"*Customer Name:* {customer_name}\n"
+        message += f"*Customer ID:* {customer_id}\n"
+        message += f"*Time:* {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        message += f"*🎯 Action Required:* Review customer profile and initiate contact."
+        
+        success = send_telegram_message_sync(message)
+        if success:
+            print(f"New customer notification sent for {customer_name}")
+        else:
+            print(f"Failed to send new customer notification for {customer_name}")
+        return success
+    except Exception as e:
+        print(f"Error sending new customer notification: {str(e)}")
+        return False
+
+def start_notification_scheduler():
+    """Start the notification scheduler in a separate thread"""
+    # Prevent spawning multiple scheduler threads on Streamlit reruns
+    # Use session_state (persists across reruns) instead of plain globals
+    try:
+        started = st.session_state.get("_notif_scheduler_started", False)
+    except Exception:
+        started = False
+    if started:
+        return
+    if not NOTIFICATION_ENABLED:
+        print("Notifications are disabled - scheduler not started")
+        return
+    
+    def run_scheduler():
+        # Schedule daily notification at 8:00 AM
+        schedule.every().day.at("08:00").do(send_daily_notification)
+        
+        while True:
+            schedule.run_pending()
+            time.sleep(60)  # Check every minute
+    
+    # Start scheduler in a separate thread
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+    try:
+        st.session_state["_notif_scheduler_started"] = True
+    except Exception:
+        pass
+    print("Notification scheduler started")
 
 # Cache OpenAI client and Memory instance
 @st.cache_resource
@@ -851,6 +1128,10 @@ def create_new_customer(customer_name: str, user_id: str):
             if response.data:
                 # Clear the creation state first
                 st.session_state.customer_creation_state = None
+                
+                # Send new customer notification
+                send_new_customer_notification(customer_name, display_id)
+                
                 return response.data[0]
             else:
                 st.error("Failed to create customer")
@@ -1612,6 +1893,29 @@ def update_customer_interaction(customer_id: str, new_input: str, new_output: st
             'interaction_metadata': updated_metas,    # list of dicts (JSON)
             'updated_at': datetime.datetime.now().isoformat()
         }).eq('customer_id', customer_id).execute()
+        
+        # 6. Send deal update notification if deals are mentioned
+        if response.data:
+            customer_name = response.data.get('customer_name', 'Unknown Customer')
+            
+            # Check if the interaction contains deal-related information
+            if any(keyword in new_output.lower() for keyword in ['deal', 'quote', 'order', 'purchase', 'rfq', 'po']):
+                # Extract deal information from the output
+                deal_info = ""
+                if 'CURRENT DEALS:' in new_output:
+                    deals_section = new_output.split('CURRENT DEALS:')[1].split('CLOSED DEALS:')[0] if 'CLOSED DEALS:' in new_output else new_output.split('CURRENT DEALS:')[1]
+                    # Take first few lines of deals info
+                    deal_lines = [line.strip() for line in deals_section.strip().split('\n')[:5] if line.strip() and '|' in line and 'Deal_ID' not in line and '---' not in line]
+                    deal_info = "\n".join(deal_lines)
+                elif 'DEAL NARRATIVE:' in new_output:
+                    narrative_section = new_output.split('DEAL NARRATIVE:')[1].split('FOLLOW-UP QUESTIONS:')[0] if 'FOLLOW-UP QUESTIONS:' in new_output else new_output.split('DEAL NARRATIVE:')[1]
+                    deal_info = narrative_section.strip()[:200] + "..." if len(narrative_section) > 200 else narrative_section.strip()
+                else:
+                    deal_info = new_output[:200] + "..." if len(new_output) > 200 else new_output
+                
+                # Send notification
+                send_deal_update_notification(customer_name, deal_info)
+        
         return response.data
     except Exception as e:
         print("Supabase update error:", e)
@@ -2127,6 +2431,96 @@ def render_analysis_ui(user_id: str):
     # Clear the input area after analysis is triggered or saved (optional, can be adjusted)
     # if 'new_analysis_query_input' in st.session_state:
     #     del st.session_state['new_analysis_query_input']
+
+    # --- Telegram Notification Section (hidden by default) ---
+    if os.getenv('NOTIFICATION_UI_VISIBLE', 'false').lower() == 'true':
+        st.markdown("---")
+        st.subheader("📱 Telegram Notifications")
+        
+        if NOTIFICATION_ENABLED:
+            st.success("✅ Telegram notifications are enabled")
+            if TELEGRAM_BOT_TOKEN:
+                st.info(f"🤖 Bot Token: {TELEGRAM_BOT_TOKEN[:10]}...")
+            if TELEGRAM_CHAT_ID:
+                st.info(f"💬 Chat ID: {TELEGRAM_CHAT_ID}")
+        else:
+            st.warning("⚠️ Telegram notifications are disabled")
+            st.info("To enable notifications, set NOTIFICATION_ENABLED=true in your .env file")
+        
+        if can_show_notification_test_ui():
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("📤 Send Test Notification", key="test_telegram_notification"):
+                    if NOTIFICATION_ENABLED and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                        with st.spinner("Sending test notification..."):
+                            test_message = "*🧪 LeanChems CRM Test Notification*\n\nThis is a test message to verify Telegram integration is working correctly.\n\n*Timestamp:* " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            success = send_telegram_message_sync(test_message)
+                            if success:
+                                st.success("✅ Test notification sent successfully!")
+                            else:
+                                st.error("❌ Failed to send test notification")
+                    else:
+                        st.error("❌ Telegram notifications not properly configured")
+            
+            with col2:
+                if st.button("📊 Send Daily Summary Now", key="send_daily_summary_now"):
+                    if NOTIFICATION_ENABLED and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                        with st.spinner("Generating and sending daily summary..."):
+                            summary = generate_daily_deal_summary()
+                            success = send_telegram_message_sync(summary)
+                            if success:
+                                st.success("✅ Daily summary sent successfully!")
+                                st.info("Summary preview:")
+                                st.text(summary[:500] + "..." if len(summary) > 500 else summary)
+                            else:
+                                st.error("❌ Failed to send daily summary")
+                    else:
+                        st.error("❌ Telegram notifications not properly configured")
+            
+            with col3:
+                if st.button("🔄 Send Deal Update Test", key="send_deal_update_test"):
+                    if NOTIFICATION_ENABLED and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                        with st.spinner("Sending deal update test..."):
+                            test_deal_info = "Test Deal D-001: RDP 1000kg - Quote sent - Waiting for PO"
+                            success = send_deal_update_notification("Test Customer", test_deal_info)
+                            if success:
+                                st.success("✅ Deal update test sent successfully!")
+                            else:
+                                st.error("❌ Failed to send deal update test")
+                    else:
+                        st.error("❌ Telegram notifications not properly configured")
+        
+        st.subheader("⚙️ Notification Settings")
+        st.info("""
+        **📅 Daily Notifications:** Automatically sent every morning at 8:00 AM
+        
+        **🔄 Real-time Updates:** Sent immediately when:
+        - New customers are created
+        - Deal updates occur (quotes, orders, status changes)
+        
+        **📊 What's included in daily summary:**
+        - Summary of all active deals
+        - Customer count and deal status
+        - Action items for the day
+        - Quick tips and insights
+        
+        **🔔 What's included in real-time updates:**
+        - New customer alerts with profile info
+        - Deal progress updates with key details
+        - Immediate action items
+        
+        **⚙️ To configure:**
+        1. Create a Telegram bot via @BotFather
+        2. Get your bot token
+        3. Get your chat ID (send a message to your bot and check @userinfobot)
+        4. Add to your .env file:
+           ```
+           TELEGRAM_BOT_TOKEN=your_bot_token_here
+           TELEGRAM_CHAT_ID=your_chat_id_here
+           NOTIFICATION_ENABLED=true
+           NOTIFICATION_UI_VISIBLE=false
+           ```
+        """)
 
 def check_documents_table():
     """Check if there are any documents in the documents table"""
@@ -2753,6 +3147,12 @@ def answer_any_query_with_rag(user_query, customer_id, user_id, top_k=3):
         {"role": "user", "content": user_query}
     ]
     return gemini_chat(messages)
+
+# Initialize notification scheduler
+try:
+    start_notification_scheduler()
+except Exception as e:
+    print(f"Failed to start notification scheduler: {str(e)}")
 
 # Update the main execution block to use the new sidebar
 if __name__ == "__main__":

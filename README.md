@@ -8,6 +8,7 @@ A modern, AI-powered CRM system built with Next.js, Supabase, and OpenAI.
 - 👥 Customer management with AI-powered insights
 - 💬 AI chat assistant with memory
 - 📊 Data analysis and reporting
+- 📱 Telegram notifications for daily updates and real-time alerts
 - 🎨 Modern, responsive UI with Tailwind CSS
 
 ## Prerequisites
@@ -15,6 +16,7 @@ A modern, AI-powered CRM system built with Next.js, Supabase, and OpenAI.
 - Node.js 18+ and npm
 - Supabase account and project
 - OpenAI API key
+- Telegram account (for notifications)
 
 ## Environment Variables
 
@@ -24,6 +26,11 @@ Create a `.env.local` file in the root directory with the following variables:
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 OPENAI_API_KEY=your_openai_api_key
+
+# Telegram Notifications (Optional)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
+NOTIFICATION_ENABLED=true
 ```
 
 ## Database Setup
@@ -84,6 +91,17 @@ npm run dev
 ```
 
 4. Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+## Telegram Notifications Setup
+
+To enable Telegram notifications for daily deal summaries and real-time updates:
+
+1. Follow the detailed setup guide in [TELEGRAM_SETUP.md](TELEGRAM_SETUP.md)
+2. Test your configuration using the provided test script:
+   ```bash
+   python test_telegram.py
+   ```
+3. Enable notifications in the CRM dashboard under "Analysis & Reporting" → "Telegram Notifications"
 
 ## Building for Production
 

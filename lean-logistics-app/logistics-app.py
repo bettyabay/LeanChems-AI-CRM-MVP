@@ -2836,24 +2836,39 @@ def generate_quote_with_items(
     template_path,
     output_path,
     customer_name,
+    representative_name,
     items,
     start_y=380,   # moved down from 365 → 380 for better spacing below headers
     row_height=20
 ):
     reader = PdfReader(template_path)
-    page = reader.pages[0]
-    width = float(page.mediabox.width)
-    height = float(page.mediabox.height)
+    first_page = reader.pages[0]
+    width = float(first_page.mediabox.width)
+    height = float(first_page.mediabox.height)
 
+    # Create overlay for page 1 only (fields live on the first page)
     packet = io.BytesIO()
     can = canvas.Canvas(packet, pagesize=(width, height))
-    can.setFont("Helvetica", 12)
+    # We'll set font per-section: tiny for header fields, default for table
 
-    # --- CUSTOMER NAME ---
-    # Move further down and aligned left to start near "CUSTOMER :"
-    customer_x = 61.45  # aligned with "CUSTOMER :" start
-    customer_y_offset = 237.55 + 35  # increased from +20 to +35 to move it down a little more
-    can.drawString(customer_x, height - customer_y_offset, customer_name)
+    # --- COMPANY NAME (Customer Name aligned under Company Name label) ---
+    # Align left with the "COMPANY NAME" label position on the template
+    company_x = 61.5
+    # Move a lot higher (smaller offset = higher on page)
+    company_y_offset = 120.0
+    can.setFont("Helvetica", 6.5)
+    can.drawString(company_x, height - company_y_offset, customer_name)
+
+    # --- REPRESENTATIVE NAME (input field value) ---
+    # Draw just below or at the Representative Name field line on the template
+    representative_x = company_x
+    # Move higher and closer to label
+    representative_y_offset = company_y_offset + 8
+    if representative_name:
+        can.drawString(representative_x, height - representative_y_offset, representative_name)
+
+    # Reset to default font for items table rendering
+    can.setFont("Helvetica", 12)
 
     # --- Column X positions with proper spacing to prevent overlap ---
     x_name = 60      # Left-aligned with "NAME" header
@@ -2898,8 +2913,13 @@ def generate_quote_with_items(
     packet.seek(0)
     overlay_pdf = PdfReader(packet)
     output = PdfWriter()
-    page.merge_page(overlay_pdf.pages[0])
-    output.add_page(page)
+
+    # Merge overlay with page 1, and include remaining pages unchanged
+    for idx, page in enumerate(reader.pages):
+        base_page = page
+        if idx == 0:
+            base_page.merge_page(overlay_pdf.pages[0])
+        output.add_page(base_page)
 
     # Ensure output directory exists
     import os
@@ -2924,6 +2944,9 @@ def render_quote_generation_ui(user_id):
     sorted_customer_names = sorted(customers_dict.keys())
     selected_customer_name = st.selectbox("Select Customer", options=sorted_customer_names, key="quote_customer_select")
     customer_id = customers_dict[selected_customer_name]
+
+    # Representative name input (to appear on the PDF under Representative Name)
+    representative_name = st.text_input("Representative Name", key="quote_representative_name")
 
     # 2. Add items for the quote
     st.subheader("Add Items to Quote")
@@ -2999,9 +3022,10 @@ def render_quote_generation_ui(user_id):
         safe_name = selected_customer_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
         output_path = f"temp_quote_{safe_name}.pdf"
         generate_quote_with_items(
-            template_path="assets/Lean_Quotatation_samples.pdf",
+            template_path=str(project_root / "assets/Lean_Sample_quotation.pdf"),
             output_path=output_path,
             customer_name=selected_customer_name,
+            representative_name=representative_name,
             items=items
         )
         
