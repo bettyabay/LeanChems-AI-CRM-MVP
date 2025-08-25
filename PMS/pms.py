@@ -99,9 +99,12 @@ with col_user:
     else:
         _email_lc = (sb_user.get('email') or '').lower()
         _role = (sb_user.get('role') or '').lower()
-        _is_mgr_display = (_role in {"manager", "admin"}) or (_email_lc in MANAGER_EMAILS)
+        # Check if user is in managers table
+        db_manager_emails = get_manager_emails_from_db()
+        _is_mgr_display = (_role in {"manager", "admin"}) or (_email_lc in MANAGER_EMAILS) or (_email_lc in db_manager_emails)
         _role_text = "Manager" if _is_mgr_display else "Viewer"
         st.caption(f"Signed in as {sb_user.get('email')} — {_role_text}")
+        
         if st.button("Sign out"):
             try:
                 supabase.auth.sign_out()
@@ -127,6 +130,8 @@ elif MANAGER_DOMAIN and user_email.endswith(f"@{MANAGER_DOMAIN}"):
     is_manager = True
 elif user_email and user_email in db_manager_emails:
     is_manager = True
+
+
 
 # Constants
 FIXED_CATEGORIES = [
