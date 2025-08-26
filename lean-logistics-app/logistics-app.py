@@ -761,7 +761,7 @@ Capture historical information by deeply searching the provided database (first 
 
 
 
-Capture key influential factors: Import/Export Volume (2022, 2023, 2024 in Kton), Ownership Structure (Foreign, Local, Government), Business Types (Manufacturing, Import, Export, Non Profit, Contractors, Industrial Parks, Investment/projects, Others), Mode of Transport (Ethiopian Shipping Lines, Global Shipping Lines, Road transport from Djibouti).
+Capture key influential factors: Ownership Structure (Foreign, Local, Government), Business Types (Manufacturing, Import, Export, Non Profit, Contractors, Industrial Parks, Investment/projects, Others), Mode of Transport (Ethiopian Shipping Lines, Global Shipping Lines, Road transport from Djibouti).
 
 
 
@@ -781,14 +781,11 @@ If the company is a conglomerate, highlight top 3 major sister companies under t
 
 
 
-Handle edge cases (e.g., no verifiable subsidiaries, conflicting sources) by outputting "More information will be given during later stages" with a Self-Criticism step to evaluate source reliability.
+Handle edge cases (e.g., no verifiable subsidiaries, conflicting sources) by outputting "More information will be given during later stages".
 
 Primary Deliverables
 
 Company Overview & Recent News
-
-
-
 
 
 ≤500-character summary of {Target Company}'s core business, size, and activity in Ethiopia. If a conglomerate, highlight top 3 sister companies.
@@ -829,10 +826,6 @@ Scale Metric (e.g., operation capacity, project size)
 
 
 
-Import and Export Data in Kton (2022, 2023, 2024)
-
-
-
 Ownership Structure (Foreign/Local/Government)
 
 
@@ -849,7 +842,47 @@ Source
 
 
 
-For edge cases (e.g., missing 2024 data or conflicting sources), output "More information will be given during later stages" and include a Self-Criticism step (e.g., "Source A claims X Kton, but Source B is unreliable due to outdated data, so marked N/A").
+For edge cases (e.g., missing data or conflicting sources), output "More information will be given during later stages".
+
+Historical Import Data
+
+
+
+
+
+Present the historical import/export data from the provided database (2022-2023) in a structured format:
+
+
+
+
+
+Table Columns:
+
+
+
+
+
+Year (2022, 2023)
+
+
+
+Import Volume (Kton)
+
+
+
+Export Volume (Kton)
+
+
+
+Total Volume (Kton)
+
+
+
+Source (Database/Web Search)
+
+
+
+For edge cases (e.g., missing data or conflicting sources), output "More information will be given during later stages".
 
 Strategic-Fit Matrix
 
@@ -857,17 +890,13 @@ Strategic-Fit Matrix
 
 
 
-Assess alignment to LeanLogistics's offerings at the group level across 3 services:
+Assess alignment to LeanLogistics's offerings at the group level across 2 services:
 
 
 
 
 
 Import
-
-
-
-Export
 
 
 
@@ -889,7 +918,7 @@ Rate overall fit out of 100, with breakdown weighted as:
 
 
 
-20% Business Segment (Manufacturing high, Import medium, Export high, Non Profit high, Contractors high, Industrial Parks high, Investment/projects high, Others low)
+20% Business Segment (Manufacturing high, Import medium, Non Profit high, Contractors high, Industrial Parks high, Investment/projects high, Others low)
 
 
 
@@ -949,7 +978,7 @@ Max 200-word narrative outlining 3–5 high-leverage opportunities and pain-poin
 
 
 
-Segment by subsector (Import, Export, Supply Chain) and recommend clear engagement actions such as:
+Segment by subsector (Import, Supply Chain) and recommend clear engagement actions such as:
 
 
 
@@ -1005,7 +1034,7 @@ Extract only real individuals verified via LinkedIn or company websites.
 
 
 
-For edge cases (e.g., no verified contacts), output "More information will be given during later stages" with a Self-Criticism step (e.g., "LinkedIn search yielded no verified logistics roles; company website outdated").
+For edge cases (e.g., no verified contacts), output "More information will be given during later stages".
 
 Research Inputs
 
@@ -1087,7 +1116,7 @@ Use numbered citations [1], [2], etc.
 
 
 
-Provide honest results—if data is missing (e.g., no 2024 volume), list as "N/A" or estimate with citation, and adjust matrix accordingly. Include Self-Criticism for edge cases (e.g., "Conflicting sources on ownership; Source A outdated, so marked N/A"). 
+Provide honest results—if data is missing (e.g., no 2024 volume), list as "N/A" or estimate with citation, and adjust matrix accordingly. 
 """
     
     messages = [
@@ -1689,21 +1718,32 @@ CURRENT_UTC = {now_iso}
    • open_deals   (Stage ∈ Open, InProcess)  
    • closed_deals (Stage ∈ Won, Lost)
 
-2. Detect DEAL EVENTS in NEW_INTERACTION.  
+2. **CRITICAL: Deal Creation Criteria**
+   ONLY create a new deal if NEW_INTERACTION contains clear evidence of:
+   - Client requesting a quotation, pricing, or proposal
+   - Client asking for specific service details (freight forwarding, SEZ warehousing, etc.)
+   - Client requesting technical specifications or requirements
+   - Client asking about delivery timelines, routes, or logistics solutions
+   - Client requesting contract terms, payment terms, or commercial details
+   - Client asking for booking or execution of a specific shipment/service
+   
+   If the interaction is just general conversation, information gathering, or relationship building WITHOUT specific service requests, DO NOT create a new deal.
+
+3. Detect DEAL EVENTS in NEW_INTERACTION (only if deal creation criteria are met).  
    Codes:  
    1 Inquiry/RFQ   2 RequirementShared   3 ProposalSent  
    4 Docs/InfoSent 5 QuoteSent  
    6 BookingConfirmed  7 Payment  8 InTransit  
    9 Delivered  10 Closed-Won  11 Closed-Lost  12 Other
 
-3. For each event decide:
+4. For each qualifying event decide:
    ▸ Update an existing deal (match by Customer + Service/Route + ref).  
-   ▸ Or create a new deal (generate sequential Deal_ID D-001, D-002…).
+   ▸ Or create a new deal (generate sequential Deal_ID D-001, D-002…) ONLY if criteria in step 2 are met.
 
-4. Update fields: Last_Event, Stage, Progress, Last_Update_ISO.  
+5. Update fields: Last_Event, Stage, Progress, Last_Update_ISO.  
    Keep Stage ∈ {{Open, InProcess}} in open_deals; move the rest to closed_deals.
 
-5. **If Stage = Closed-Won**, capture primary reason(s) from the 7 Success Drivers:  
+6. **If Stage = Closed-Won**, capture primary reason(s) from the 7 Success Drivers:  
    - Value Fit  
    - Trust & Relationship  
    - Unique Advantage  
@@ -1714,7 +1754,7 @@ CURRENT_UTC = {now_iso}
 
    → Record up to 3 most relevant.  
 
-6. **If Stage = Closed-Lost**, capture primary reason(s) from the 7 Failure Reasons:  
+7. **If Stage = Closed-Lost**, capture primary reason(s) from the 7 Failure Reasons:  
    - Price Misfit  
    - Decision Dynamics  
    - Timing & Cash Flow  
@@ -1729,7 +1769,7 @@ CURRENT_UTC = {now_iso}
    • If Non-changeable → mark "Avoid Similar Deals"  
    • If Changeable → mark "Improvement Needed" + 1 recommendation  
 
-7. For each open deal, map to the 7 LeanLogistiQ Sales Stages:  
+8. For each open deal, map to the 7 LeanLogistiQ Sales Stages:  
    1 Lead Generation  
    2 Initial Contact & Rapport  
    3 Needs Assessment  
@@ -1738,7 +1778,7 @@ CURRENT_UTC = {now_iso}
    6 Booking & Execution  
    7 Post-Support & Cross-sell  
 
-8. For each open deal compute a **Deal Health Score (0–100)**:  
+9. For each open deal compute a **Deal Health Score (0–100)**:  
    - Stage Progress (40%) → higher stage = higher score  
    - Customer Intent (30%) → strong interest = +30, weak = +10  
    - Risk Signals (20%) → delays, competitor = -10 to -20  
@@ -1746,18 +1786,25 @@ CURRENT_UTC = {now_iso}
 
    Output: Score + rationale.  
 
-9. Build DEAL NARRATIVE (≤5 bullets each):  
+10. Build DEAL NARRATIVE (≤5 bullets each):  
    • Chronology from day 1 to now  
    • Customer Thought Process – short narrative  
    • Risk Signals – short narrative  
 
-10. Prepare FOLLOW-UP QUESTIONS:  
+11. Prepare FOLLOW-UP QUESTIONS:  
    • Ask for missing Volume/Price/Route/Incoterm/Payment.  
    • Ask for update if Last_Update_ISO >72h.  
    • Suggest next step to push closer to closing.
 
 ================  OUTPUT  =================
 Return markdown with 6 sections in this exact order:
+
+**IMPORTANT: If NEW_INTERACTION does not meet the deal creation criteria (no specific service requests, quotations, or commercial inquiries), output:**
+
+NO DEALS TO TRACK:
+This interaction does not contain specific service requests, quotations, or commercial inquiries that warrant deal creation. The conversation appears to be general relationship building or information gathering.
+
+**OR if deals exist/are created, use the standard format:**
 
 CURRENT DEALS:
 | Deal_ID | Customer | Service/Route | Volume | Price | Stage | Progress | HealthScore | Last_Update |
@@ -1852,6 +1899,8 @@ Allowed STATUS words (MUST be upper-case and in bold):
 Return markdown only:
 
 SALES STAGE STATUS:
+IMPORTANT: Only display stages that have substantial evidence or are actively progressing. If a stage is marked as **PENDING** or **N/A** and contains no specific evidence, details, or meaningful progress indicators, DO NOT include that stage in the output.
+
 - Stage 1 – Lead Generation: STATUS  
     • Evidence 1 ..  
     • Evidence 2 ..  
@@ -1861,7 +1910,7 @@ SALES STAGE STATUS:
 - Stage 2 – Initial Contact & Rapport: STATUS  
     • ...  
 
-(continue through Stage 7)
+(continue through Stage 7, but only include stages with meaningful content)
 
 ACTION PLAN:
 - Step 1: Immediate move to advance customer to next stage  
@@ -1939,20 +1988,20 @@ SALES_STAGE_ANALYSIS:
    • Keep it practical and tied to people-dynamics.
 
 ▼ OUTPUT – markdown only
-Suggested Next Action:
-- Primary Action: … (Priority: XX, Confidence: High/Med/Low – Evidence: "…")  
-- Supporting Tasks:  
-  • … (Priority: XX, Confidence: … – Evidence: "…")  
-- Timeline: …
-
-Enabler Intelligence:
+Enabler Mapping:
 | Name | Position / Connection | Impact | Willingness | InfluenceScore | Confidence | Evidence | Suggested Management Approach |
 |------|-----------------------|--------|-------------|----------------|------------|----------|--------------------------------|
 | …    | …                     | …      | …           | …              | …          | …        | … |
 
 If/Then Playbook:
 - If … → Then …  
-- If … → Then …  
+- If … → Then …
+
+Next Action:
+- Primary Action: … (Priority: XX, Confidence: High/Med/Low – Evidence: "…")  
+- Supporting Tasks:  
+  • … (Priority: XX, Confidence: … – Evidence: "…")  
+- Timeline: …  
 """
     messages = [
         {"role": "system", "content": system_prompt},
@@ -2342,11 +2391,11 @@ def render_update_interaction_ui(user_id: str):
             analysis_data = st.session_state['current_interaction_analysis']
             st.subheader("🤖 AI Analysis")
             # Tabs for AI output
-            tabs = st.tabs(["Deal Analysis", "Sales Stage", "Next Action"])
+            tabs = st.tabs(["Sales Stage", "Deal Analysis", "Next Action"])
             with tabs[0]:
-                st.write(analysis_data['deal_analysis'])
-            with tabs[1]:
                 st.write(analysis_data['sales_stage_tracker'])
+            with tabs[1]:
+                st.write(analysis_data['deal_analysis'])
             with tabs[2]:
                 st.write(analysis_data.get('next_action_str', analysis_data.get('suggest_next_action')))
             col1, col2 = st.columns(2)
