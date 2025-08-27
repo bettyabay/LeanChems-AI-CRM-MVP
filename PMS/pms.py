@@ -9,6 +9,10 @@ import io
 from docx import Document
 import base64
 from datetime import datetime
+try:
+    from groq import Groq  # type: ignore
+except Exception:  # groq sdk may not be installed in some environments
+    Groq = None  # type: ignore
 
 # Page config
 st.set_page_config(page_title="LeanChems PMS", layout="centered")
@@ -30,6 +34,7 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Configure Gemini AI
@@ -43,6 +48,8 @@ if GEMINI_API_KEY:
                 "top_p": 0.9,
                 "top_k": 40,
                 "max_output_tokens": 2048,
+                # Nudge Gemini to return JSON when requested
+                "response_mime_type": "application/json",
             },
         )
     except Exception as e:
@@ -50,6 +57,55 @@ if GEMINI_API_KEY:
         gemini_model = None
 else:
     gemini_model = None
+
+# Configure Groq client (optional)
+groq_client = None
+if GROQ_API_KEY and Groq is not None:
+    try:
+        groq_client = Groq(api_key=GROQ_API_KEY)
+    except Exception as _:
+        groq_client = None
+
+# Lenient JSON parsing helpers (module-level)
+import re as _re_glob
+import json as _json_glob
+def _strip_fences_glob(txt: str) -> str:
+    if txt and txt.strip().startswith("```"):
+        return _re_glob.sub(r"^```(?:json)?\n|```$", "", txt.strip(), flags=_re_glob.IGNORECASE)
+    return txt
+def _normalize_quotes_glob(txt: str) -> str:
+    return (txt or "") \
+        .replace("\u201c", '"').replace("\u201d", '"') \
+        .replace("\u2018", "'").replace("\u2019", "'") \
+        .replace(""", '"').replace(""", '"') \
+        .replace("'", "'").replace("'", "'")
+def _remove_trailing_commas_glob(txt: str) -> str:
+    return _re_glob.sub(r",\s*(?=[}\]])", "", txt or "")
+def _first_json_object_glob(txt: str) -> str | None:
+    m = _re_glob.search(r"\{[\s\S]*\}", txt or "")
+    return m.group(0) if m else None
+def _parse_lenient_json(raw_text: str):
+    if not raw_text:
+        return None
+    txt = _strip_fences_glob(raw_text)
+    txt = _normalize_quotes_glob(txt)
+    try:
+        return _json_glob.loads(txt)
+    except Exception:
+        pass
+    obj = _first_json_object_glob(txt)
+    if obj:
+        try:
+            return _json_glob.loads(obj)
+        except Exception:
+            try:
+                return _json_glob.loads(_remove_trailing_commas_glob(obj))
+            except Exception:
+                return None
+    try:
+        return _json_glob.loads(_remove_trailing_commas_glob(txt))
+    except Exception:
+        return None
 
 # Attempt to restore auth session if present
 if "sb_session" in st.session_state:
@@ -423,7 +479,7 @@ def extract_tds_info_with_ai(text_content):
                     extracted_info[key] = value
         
         return extracted_info
-        
+         
     except Exception as e:
         st.error(f"AI extraction error: {str(e)}")
         st.info("💡 This could be due to content filtering, network issues, or API limits. You can still manually fill in the fields below.")
@@ -722,305 +778,165 @@ def update_chemical(chemical_id: str, updates: dict):
 def delete_chemical(chemical_id: str):
     return supabase.table("chemical_types").delete().eq("id", chemical_id).execute()
 
-def get_fallback_chemical_data(chemical_name: str) -> dict:
-    """Provide fallback chemical data when AI extraction fails"""
-    name_lower = chemical_name.lower()
-    
-    # Default fallback data
-    fallback_data = {
-        "generic_name": chemical_name,
-        "family": "Chemical compound",
-        "synonyms": [],
-        "cas_ids": [],
-        "hs_codes": [],
-        "functional_categories": [],
-        "industry_segments": [],
-        "key_applications": [],
-        "typical_dosage": [],
-        "appearance": "Powder or liquid",
-        "physical_snapshot": [],
-        "compatibilities": [],
-        "incompatibilities": [],
-        "sensitivities": [],
-        "shelf_life_months": 12,
-        "storage_conditions": "Store in cool, dry place",
-        "packaging_options": ["25 kg bags"],
-        "summary_80_20": f"{chemical_name} is a chemical compound used in various industrial applications.",
-        "summary_technical": f"Technical specifications for {chemical_name} should be verified from manufacturer data sheets.",
-        "data_completeness": 0.3,
-    }
-    
-    # Provide better fallback data for common chemicals
-    if "methylcellulose" in name_lower or "methycellulose" in name_lower:
-        fallback_data.update({
-            "family": "Cellulose ether",
-            "synonyms": ["MC", "Methylcellulose"],
-            "cas_ids": ["9004-67-5"],
-            "hs_codes": [{"region": "WCO", "code": "391290"}],
-            "functional_categories": ["Thickener", "Water retention"],
-            "industry_segments": ["Dry-mix", "Paint/Coatings"],
-            "key_applications": ["Tile adhesive", "Skim coat"],
-            "typical_dosage": [{"application": "Tile adhesive", "range": "0.1-0.4% bwoc"}],
-            "appearance": "White to off-white powder",
-            "physical_snapshot": [{"name": "Moisture", "value": "≤5", "unit": "%", "method": "ASTM E1131"}],
-            "compatibilities": ["Cementitious systems"],
-            "incompatibilities": ["Strong oxidizers"],
-            "sensitivities": ["Salt content", "Alkali level"],
-            "shelf_life_months": 24,
-            "storage_conditions": "Cool, dry, sealed",
-            "packaging_options": ["25 kg bags"],
-            "summary_80_20": "Cellulose ether thickener for mortar applications; improves workability and water retention.",
-            "summary_technical": "Non-ionic polymer; viscosity grades control open time and sag resistance.",
-            "data_completeness": 0.7,
-        })
-    elif "hpmc" in name_lower or "hydroxypropyl" in name_lower:
-        fallback_data.update({
-            "family": "Cellulose ether",
-            "synonyms": ["HPMC", "Hypromellose"],
-            "cas_ids": ["9004-65-3"],
-            "hs_codes": [{"region": "WCO", "code": "391290"}],
-            "functional_categories": ["Thickener", "Water retention"],
-            "industry_segments": ["Dry-mix", "Paint/Coatings"],
-            "key_applications": ["Tile adhesive", "Skim coat"],
-            "typical_dosage": [{"application": "Tile adhesive", "range": "0.2-0.6% bwoc"}],
-            "appearance": "White free-flowing powder",
-            "physical_snapshot": [{"name": "Moisture", "value": "≤5", "unit": "%", "method": "ASTM E1131"}],
-            "compatibilities": ["Cementitious systems"],
-            "incompatibilities": ["Strong oxidizers"],
-            "sensitivities": ["Salt content", "Alkali level"],
-            "shelf_life_months": 24,
-            "storage_conditions": "Cool, dry, sealed",
-            "packaging_options": ["25 kg bags"],
-            "summary_80_20": "Cellulose ether thickener for mortar/coatings; improves workability and water retention.",
-            "summary_technical": "Non-ionic polymer; viscosity grades control open time and sag resistance.",
-            "data_completeness": 0.8,
-        })
-    elif "rdp" in name_lower or "redispersible" in name_lower:
-        fallback_data.update({
-            "family": "Polymer binder",
-            "synonyms": ["RDP", "Redispersible Polymer Powder"],
-            "cas_ids": ["9003-20-7"],
-            "hs_codes": [{"region": "WCO", "code": "390529"}],
-            "functional_categories": ["Binder", "Flexibility enhancer"],
-            "industry_segments": ["Dry-mix"],
-            "key_applications": ["Tile adhesive", "Skim coat"],
-            "typical_dosage": [{"application": "Tile adhesive", "range": "2-5% bwoc"}],
-            "appearance": "White/off-white powder",
-            "physical_snapshot": [{"name": "Solid content", "value": "≥98", "unit": "%", "method": "Internal"}],
-            "compatibilities": ["Cementitious systems"],
-            "incompatibilities": ["Strong solvents"],
-            "sensitivities": ["Moisture"],
-            "shelf_life_months": 12,
-            "storage_conditions": "Cool, dry, sealed",
-            "packaging_options": ["25 kg bags"],
-            "summary_80_20": "Redispersible polymer binder to boost adhesion and flexibility in cement mortars.",
-            "summary_technical": "VAE/Veova copolymers; improve tensile strength and crack resistance.",
-            "data_completeness": 0.75,
-        })
-    
-    return fallback_data
-
 def analyze_chemical_with_ai(chemical_name: str) -> dict | None:
     if not gemini_model:
-        return None
+        # If Gemini is not configured, we can still use Groq if available
+        pass
     name = (chemical_name or "").strip()
     if not name:
         return None
     try:
-        # Very simple, neutral prompt to avoid content filtering
-        prompt = f"""
-Analyze this material: "{name}"
-
-Return JSON with this structure:
-{{
-  "generic_name": "{name}",
-  "family": "material type",
-  "synonyms": ["alternative names"],
-  "cas_ids": ["CAS numbers"],
-  "hs_codes": [{{"region": "WCO", "code": "HS code"}}],
-  "functional_categories": ["primary functions"],
-  "industry_segments": ["main industries"],
-  "key_applications": ["primary uses"],
-  "typical_dosage": [{{"application": "use case", "range": "typical amount"}}],
-  "appearance": "physical description",
-  "physical_snapshot": [{{"name": "property name", "value": "property value", "unit": "unit of measure", "method": "test method"}}],
-  "compatibilities": ["compatible systems"],
-  "incompatibilities": ["incompatible systems"],
-  "sensitivities": ["environmental factors"],
-  "shelf_life_months": 24,
-  "storage_conditions": "storage requirements",
-  "packaging_options": ["packaging types"],
-  "summary_80_20": "brief description",
-  "summary_technical": "technical description",
-  "data_completeness": 0.8
-}}
-
-Provide reasonable information for each field. Return JSON only.
-"""
-        response = gemini_model.generate_content(prompt)
-        
-        # Check if response was blocked or failed
-        if not response:
-            st.warning("⚠️ No AI response received. Using fallback data.")
-            data = get_fallback_chemical_data(name)
-        elif hasattr(response, 'finish_reason'):
-            if response.finish_reason == 2:
-                st.warning("⚠️ AI response was blocked due to content filtering. Using fallback data.")
-                data = get_fallback_chemical_data(name)
-            elif response.finish_reason == 3:
-                st.warning("⚠️ AI response was stopped due to safety concerns. Using fallback data.")
-                data = get_fallback_chemical_data(name)
-            elif response.finish_reason == 4:
-                st.warning("⚠️ AI response was stopped due to recitation. Using fallback data.")
-                data = get_fallback_chemical_data(name)
-            else:
-                st.warning(f"⚠️ AI response had finish reason: {response.finish_reason}. Using fallback data.")
-                data = get_fallback_chemical_data(name)
-        else:
-            # Try to get response text safely
-            try:
-                raw = (response.text or "").strip()
-            except Exception as text_error:
-                st.warning(f"⚠️ Could not extract text from AI response: {text_error}. Using fallback data.")
-                raw = ""
-            
-            # Check if we have any content to parse
-            if not raw:
-                st.warning("⚠️ AI response was empty. Using fallback data.")
-                data = get_fallback_chemical_data(name)
-            else:
-                # Attempt to parse JSON
-                import json
-                data = {}
-                try:
-                    data = json.loads(raw)
-                except Exception as json_error:
-                    st.warning(f"⚠️ Could not parse AI response as JSON: {json_error}. Using fallback data.")
-                    # Fallback: provide basic data based on chemical name
-                    data = get_fallback_chemical_data(name)
-        # Normalize types
-        def ensure_list(value):
-            if value is None:
+        # Helper to normalize output to our 20-field schema
+        def _normalize(data: dict) -> dict:
+            def ensure_list(value):
+                if value is None:
+                    return []
+                if isinstance(value, list):
+                    return value
+                if isinstance(value, str):
+                    return [s.strip() for s in value.split(",") if s.strip()]
                 return []
-            if isinstance(value, list):
-                return value
-            if isinstance(value, str):
-                return [s.strip() for s in value.split(",") if s.strip()]
-            return []
+            normalized = {
+                "generic_name": (data.get("generic_name") or name).strip(),
+                "family": (data.get("family") or "").strip(),
+                "synonyms": ensure_list(data.get("synonyms")),
+                "cas_ids": ensure_list(data.get("cas_ids")),
+                "hs_codes": data.get("hs_codes") if isinstance(data.get("hs_codes"), list) else [],
+                "functional_categories": ensure_list(data.get("functional_categories")),
+                "industry_segments": ensure_list(data.get("industry_segments")),
+                "key_applications": ensure_list(data.get("key_applications")),
+                "typical_dosage": data.get("typical_dosage") if isinstance(data.get("typical_dosage"), list) else [],
+                "appearance": (data.get("appearance") or "").strip(),
+                "physical_snapshot": data.get("physical_snapshot") if isinstance(data.get("physical_snapshot"), list) else [],
+                "compatibilities": ensure_list(data.get("compatibilities")),
+                "incompatibilities": ensure_list(data.get("incompatibilities")),
+                "sensitivities": ensure_list(data.get("sensitivities")),
+                "shelf_life_months": int(data.get("shelf_life_months") or 0),
+                "storage_conditions": (data.get("storage_conditions") or "").strip(),
+                "packaging_options": ensure_list(data.get("packaging_options")),
+                "summary_80_20": (data.get("summary_80_20") or "").strip(),
+                "summary_technical": (data.get("summary_technical") or "").strip(),
+                "data_completeness": float(data.get("data_completeness") or 0.0),
+            }
+            dc = normalized["data_completeness"]
+            if dc < 0.0:
+                normalized["data_completeness"] = 0.0
+            elif dc > 1.0:
+                normalized["data_completeness"] = 1.0
+            return normalized
 
-        for key in [
-            "synonyms",
-            "cas_ids",
-            "functional_categories",
-            "industry_segments",
-            "key_applications",
-            "compatibilities",
-            "incompatibilities",
-            "sensitivities",
-            "packaging_options",
-        ]:
-            data[key] = ensure_list(data.get(key))
+        # 1) Try Groq first if available
+        if groq_client is not None:
+            try:
+                groq_schema_prompt = f"""
+You are assisting with business-safe catalog metadata for a material. Respond with valid JSON only.
+Material: "{name}"
+Required JSON schema keys (arrays can be empty):
+{{
+  "generic_name": string,
+  "family": string,
+  "synonyms": array,
+  "cas_ids": array,
+  "hs_codes": array,  // of objects like {{"region":"WCO","code":"HS"}}
+  "functional_categories": array,
+  "industry_segments": array,
+  "key_applications": array,
+  "typical_dosage": array, // of objects like {{"application":"","range":""}}
+  "appearance": string,
+  "physical_snapshot": array, // of objects like {{"name":"","value":"","unit":"","method":""}}
+  "compatibilities": array,
+  "incompatibilities": array,
+  "sensitivities": array,
+  "shelf_life_months": number,
+  "storage_conditions": string,
+  "packaging_options": array,
+  "summary_80_20": string,
+  "summary_technical": string,
+  "data_completeness": number
+}}
+"""
+                chat = groq_client.chat.completions.create(
+                    model="llama-3.1-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that outputs valid JSON only."},
+                        {"role": "user", "content": groq_schema_prompt},
+                    ],
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                    max_tokens=1200,
+                )
+                raw = (chat.choices[0].message.content or "").strip()
+                if raw:
+                    groq_data = _parse_lenient_json(raw)
+                    if groq_data and isinstance(groq_data, dict):
+                        norm = _normalize(groq_data)
+                        try:
+                            st.session_state["chem_ai_source"] = "groq"
+                        except Exception:
+                            pass
+                        return norm
+            except Exception:
+                # Fall through to Gemini
+                pass
 
-        # hs_codes and typical_dosage and physical_snapshot must be arrays of objects
-        if not isinstance(data.get("hs_codes"), list):
-            data["hs_codes"] = []
-        if not isinstance(data.get("typical_dosage"), list):
-            data["typical_dosage"] = []
-        if not isinstance(data.get("physical_snapshot"), list):
-            data["physical_snapshot"] = []
+        # 2) Fallback to Gemini if available
+        if gemini_model is None:
+            return None
+        prompt_primary = f"""
+ You are creating neutral catalog metadata for a material. Provide general, non-hazardous, business-safe descriptions only.
+ Do not provide procedures, handling instructions, or dangerous guidance. Output valid JSON only matching the schema.
+ 
+ Material: "{name}"
+ 
+ Schema:
+ {{
+   "generic_name": "{name}",
+   "family": "material type",
+   "synonyms": ["alternative names"],
+   "cas_ids": ["CAS numbers"],
+   "hs_codes": [{{"region": "WCO", "code": "HS code"}}],
+   "functional_categories": ["primary functions"],
+   "industry_segments": ["main industries"],
+   "key_applications": ["primary uses"],
+   "typical_dosage": [{{"application": "use case", "range": "broad % range"}}],
+   "appearance": "brief physical description",
+   "physical_snapshot": [{{"name": "property", "value": "value", "unit": "unit", "method": "method"}}],
+   "compatibilities": ["compatible systems"],
+   "incompatibilities": ["incompatible systems"],
+   "sensitivities": ["environmental factors"],
+   "shelf_life_months": 24,
+   "storage_conditions": "storage requirements",
+   "packaging_options": ["packaging types"],
+   "summary_80_20": "one-sentence description",
+   "summary_technical": "concise technical description",
+   "data_completeness": 0.8
+ }}
+ """
 
-        # Scalars normalization
-        data["generic_name"] = (data.get("generic_name") or name).strip()
-        data["family"] = (data.get("family") or "").strip()
-        data["appearance"] = (data.get("appearance") or "").strip()
-        data["storage_conditions"] = (data.get("storage_conditions") or "").strip()
-        data["summary_80_20"] = (data.get("summary_80_20") or "").strip()
-        data["summary_technical"] = (data.get("summary_technical") or "").strip()
-        # Numerics
-        try:
-            data["shelf_life_months"] = int(data.get("shelf_life_months") or 0)
-        except Exception:
-            data["shelf_life_months"] = 0
-        try:
-            dc = float(data.get("data_completeness") or 0.0)
-            data["data_completeness"] = max(0.0, min(1.0, dc))
-        except Exception:
-            data["data_completeness"] = 0.0
-        # Heuristic enrichment to ensure non-empty fields for common chemicals
-        try:
-            name_l = data.get("generic_name", name).lower()
-            def ensure(key, value):
-                if not data.get(key) or (isinstance(data.get(key), list) and len(data.get(key)) == 0):
-                    data[key] = value
-            # Redispersible Polymer Powder (RDP)
-            if ("redispersible" in name_l and "powder" in name_l) or "rdp" in name_l:
-                ensure("family", "Polymer binder")
-                ensure("synonyms", ["RDP", "Redispersible Polymer Powder"]) 
-                ensure("hs_codes", [{"region": "WCO", "code": "390529"}])
-                ensure("functional_categories", ["Binder", "Flexibility enhancer"]) 
-                ensure("industry_segments", ["Dry-mix"]) 
-                ensure("key_applications", ["Tile adhesive", "Skim coat"]) 
-                ensure("typical_dosage", [{"application": "Tile adhesive", "range": "2–5% bwoc"}])
-                ensure("appearance", "White/redispersible powder") 
-                ensure("physical_snapshot", [{"name": "Solid content", "value": "≥98", "unit": "%", "method": "Internal"}])
-                ensure("compatibilities", ["Cementitious systems"]) 
-                ensure("incompatibilities", ["Strong solvents"]) 
-                ensure("sensitivities", ["Moisture"]) 
-                if not data.get("shelf_life_months"):
-                    data["shelf_life_months"] = 12
-                ensure("storage_conditions", "Cool, dry, sealed") 
-                ensure("packaging_options", ["25 kg bags"]) 
-                ensure("summary_80_20", "Redispersible polymer binder to boost adhesion/flexibility in cement mortars.") 
-                ensure("summary_technical", "VAE/Veova copolymers; improve tensile/peel strength and crack resistance.") 
-                if not data.get("data_completeness"):
-                    data["data_completeness"] = 0.8
-            if "titanium" in name_l and "dioxide" in name_l:
-                ensure("family", "Inorganic pigment")
-                ensure("synonyms", ["TiO2"])
-                ensure("cas_ids", ["13463-67-7"])
-                ensure("hs_codes", [{"region": "WCO", "code": "320611"}])
-                ensure("functional_categories", ["Pigment", "Opacifier"])
-                ensure("industry_segments", ["Paint/Coatings", "Plastics"])
-                ensure("key_applications", ["Interior paint", "Plastic masterbatch"])
-                ensure("typical_dosage", [{"application": "Interior paint", "range": "15–25%"}])
-                ensure("appearance", "White powder")
-                ensure("physical_snapshot", [{"name": "Density", "value": "4.2", "unit": "g/cm3", "method": "ISO 787"}])
-                ensure("compatibilities", ["Acrylic binders"])
-                ensure("incompatibilities", ["Strong acids"])
-                ensure("sensitivities", ["Agglomeration"])
-                if not data.get("shelf_life_months"):
-                    data["shelf_life_months"] = 36
-                ensure("storage_conditions", "Dry, covered, avoid contamination")
-                ensure("packaging_options", ["25 kg bags", "500 kg big bags"])
-                ensure("summary_80_20", "High-opacity white pigment used widely in coatings and plastics.")
-                ensure("summary_technical", "Rutile/anatase grades; surface treatment improves dispersion and weathering.")
-                if not data.get("data_completeness"):
-                    data["data_completeness"] = 0.9
-            if ("hydroxypropyl" in name_l and "methylcellulose" in name_l) or "hpmc" in name_l:
-                ensure("family", "Cellulose ether")
-                ensure("synonyms", ["HPMC", "Hypromellose"])
-                ensure("cas_ids", ["9004-65-3"])
-                ensure("hs_codes", [{"region": "WCO", "code": "391290"}])
-                ensure("functional_categories", ["Thickener", "Water retention"])
-                ensure("industry_segments", ["Dry-mix", "Paint/Coatings"])
-                ensure("key_applications", ["Tile adhesive", "Skim coat"])
-                ensure("typical_dosage", [{"application": "Tile adhesive", "range": "0.2–0.6% bwoc"}])
-                ensure("appearance", "White free-flowing powder")
-                ensure("physical_snapshot", [{"name": "Moisture", "value": "≤5", "unit": "%", "method": "ASTM E1131"}])
-                ensure("compatibilities", ["Cementitious systems"])
-                ensure("incompatibilities", ["Strong oxidizers"])
-                ensure("sensitivities", ["Salt content", "Alkali level"])
-                if not data.get("shelf_life_months"):
-                    data["shelf_life_months"] = 24
-                ensure("storage_conditions", "Cool, dry, sealed")
-                ensure("packaging_options", ["25 kg bags"])
-                ensure("summary_80_20", "Cellulose ether thickener for mortar/coatings; improves workability and water retention.")
-                ensure("summary_technical", "Non-ionic polymer; viscosity grades control open time and sag.")
-                if not data.get("data_completeness"):
-                    data["data_completeness"] = 0.85
-        except Exception:
-            pass
-        return data
+        def _try_generate_text(p):
+            try:
+                r = gemini_model.generate_content(p)
+                if not r:
+                    return None
+                if hasattr(r, 'finish_reason') and r.finish_reason in (2, 3, 4):
+                    return None
+                try:
+                    txt = (r.text or "").strip()
+                except Exception:
+                    return None
+                return txt if txt else None
+            except Exception:
+                return None
+
+        raw = _try_generate_text(prompt_primary)
+        if not raw:
+            st.warning("⚠️ AI response was blocked or empty.")
+            return None
+        data = _parse_lenient_json(raw)
+        if not data or not isinstance(data, dict):
+            st.warning("⚠️ Could not parse AI response as JSON: No JSON object found.")
+            return None
+        return _normalize(data)
     except Exception as e:
         st.error(f"AI analysis error: {e}")
         st.info("💡 This could be due to content filtering, network issues, or API limits. You can still manually fill in the fields below.")
@@ -1532,74 +1448,39 @@ with tab_chem_master:
                     return str(value)
             return str(value)
 
-        # Editable fields with AI suggestions shown (not prefilled)
+        # Prefilled editable fields (no extra AI captions)
         colc1, colc2 = st.columns(2)
         with colc1:
-            chem_gen = st.text_input("Generic Name", value="", key="chem_generic", placeholder=extracted.get("generic_name", ""))
-            if extracted:
-                st.caption(f"AI: {extracted.get('generic_name','')}")
-            chem_family = st.text_input("Family", value="", key="chem_family", placeholder=extracted.get("family", ""))
-            if extracted:
-                st.caption(f"AI: {extracted.get('family','')}")
-            chem_syn = st.text_input("Synonyms (comma-separated)", value="", key="chem_syn", placeholder=csv_default(extracted.get("synonyms", [])))
-            if extracted:
-                st.caption(f"AI: {csv_default(extracted.get('synonyms', []))}")
-            chem_cas = st.text_input("CAS IDs (comma-separated)", value="", key="chem_cas", placeholder=csv_default(extracted.get("cas_ids", [])))
-            if extracted:
-                st.caption(f"AI: {csv_default(extracted.get('cas_ids', []))}")
-            chem_func = st.text_input("Functional Categories (comma-separated)", value="", key="chem_func", placeholder=csv_default(extracted.get("functional_categories", [])))
-            if extracted:
-                st.caption(f"AI: {csv_default(extracted.get('functional_categories', []))}")
-            chem_inds = st.text_input("Industry Segments (comma-separated)", value="", key="chem_inds", placeholder=csv_default(extracted.get("industry_segments", [])))
-            if extracted:
-                st.caption(f"AI: {csv_default(extracted.get('industry_segments', []))}")
-            chem_keys = st.text_input("Key Applications (comma-separated)", value="", key="chem_keys", placeholder=csv_default(extracted.get("key_applications", [])))
-            if extracted:
-                st.caption(f"AI: {csv_default(extracted.get('key_applications', []))}")
+            chem_gen = st.text_input("Generic Name", value=extracted.get("generic_name", ""), key="chem_generic")
+            chem_family = st.text_input("Family", value=extracted.get("family", ""), key="chem_family")
+            chem_syn = st.text_input("Synonyms (comma-separated)", value=csv_default(extracted.get("synonyms", [])), key="chem_syn")
+            chem_cas = st.text_input("CAS IDs (comma-separated)", value=csv_default(extracted.get("cas_ids", [])), key="chem_cas")
+            chem_func = st.text_input("Functional Categories (comma-separated)", value=csv_default(extracted.get("functional_categories", [])), key="chem_func")
+            chem_inds = st.text_input("Industry Segments (comma-separated)", value=csv_default(extracted.get("industry_segments", [])), key="chem_inds")
+            chem_keys = st.text_input("Key Applications (comma-separated)", value=csv_default(extracted.get("key_applications", [])), key="chem_keys")
         with colc2:
-            chem_hs_json = st.text_area("HS Codes JSON (array of {region,code})", value="", height=80, key="chem_hs_json", placeholder=_ai_view(extracted.get("hs_codes")))
-            if extracted:
-                st.caption(f"AI: {_ai_view(extracted.get('hs_codes'))}")
-            chem_dosage_json = st.text_area("Typical Dosage JSON (array of {application,range})", value="", height=80, key="chem_dosage_json", placeholder=_ai_view(extracted.get("typical_dosage")))
-            if extracted:
-                st.caption(f"AI: {_ai_view(extracted.get('typical_dosage'))}")
-            chem_phys_json = st.text_area("Physical Snapshot JSON (array of {name,value,unit,method})", value="", height=80, key="chem_phys_json", placeholder=_ai_view(extracted.get("physical_snapshot")))
-            if extracted:
-                st.caption(f"AI: {_ai_view(extracted.get('physical_snapshot'))}")
-            chem_compat = st.text_input("Compatibilities (comma-separated)", value="", key="chem_compat", placeholder=csv_default(extracted.get("compatibilities", [])))
-            if extracted:
-                st.caption(f"AI: {csv_default(extracted.get('compatibilities', []))}")
-            chem_incompat = st.text_input("Incompatibilities (comma-separated)", value="", key="chem_incompat", placeholder=csv_default(extracted.get("incompatibilities", [])))
-            if extracted:
-                st.caption(f"AI: {csv_default(extracted.get('incompatibilities', []))}")
-            chem_sens = st.text_input("Sensitivities (comma-separated)", value="", key="chem_sens", placeholder=csv_default(extracted.get("sensitivities", [])))
-            if extracted:
-                st.caption(f"AI: {csv_default(extracted.get('sensitivities', []))}")
-
+            chem_hs_json = st.text_area("HS Codes JSON (array of {region,code})", value=_ai_view(extracted.get("hs_codes")) if extracted else "", height=80, key="chem_hs_json")
+            chem_dosage_json = st.text_area("Typical Dosage JSON (array of {application,range})", value=_ai_view(extracted.get("typical_dosage")) if extracted else "", height=80, key="chem_dosage_json")
+            chem_phys_json = st.text_area("Physical Snapshot JSON (array of {name,value,unit,method})", value=_ai_view(extracted.get("physical_snapshot")) if extracted else "", height=80, key="chem_phys_json")
+            chem_compat = st.text_input("Compatibilities (comma-separated)", value=csv_default(extracted.get("compatibilities", [])), key="chem_compat")
+            chem_incompat = st.text_input("Incompatibilities (comma-separated)", value=csv_default(extracted.get("incompatibilities", [])), key="chem_incompat")
+            chem_sens = st.text_input("Sensitivities (comma-separated)", value=csv_default(extracted.get("sensitivities", [])), key="chem_sens")
         colc3, colc4 = st.columns(2)
         with colc3:
-            chem_appearance = st.text_input("Appearance", value="", key="chem_appearance", placeholder=extracted.get("appearance", ""))
-            if extracted:
-                st.caption(f"AI: {extracted.get('appearance','')}")
-            chem_storage = st.text_input("Storage Conditions", value="", key="chem_storage", placeholder=extracted.get("storage_conditions", ""))
-            if extracted:
-                st.caption(f"AI: {extracted.get('storage_conditions','')}")
-            chem_pack = st.text_input("Packaging Options (comma-separated)", value="", key="chem_pack", placeholder=csv_default(extracted.get("packaging_options", [])))
-            if extracted:
-                st.caption(f"AI: {csv_default(extracted.get('packaging_options', []))}")
+            chem_appearance = st.text_input("Appearance", value=extracted.get("appearance", ""), key="chem_appearance")
+            chem_storage = st.text_input("Storage Conditions", value=extracted.get("storage_conditions", ""), key="chem_storage")
+            chem_pack = st.text_input("Packaging Options (comma-separated)", value=csv_default(extracted.get("packaging_options", [])), key="chem_pack")
         with colc4:
-            chem_shelf = st.number_input("Shelf Life (months)", min_value=0, max_value=120, value=0, step=1, key="chem_shelf")
-            if extracted:
-                st.caption(f"AI: {extracted.get('shelf_life_months', 0)}")
-            chem_dc = st.slider("Data Completeness", min_value=0.0, max_value=1.0, value=0.0, step=0.05, key="chem_dc")
-            if extracted:
-                st.caption(f"AI: {extracted.get('data_completeness', 0.0)}")
-        chem_sum_8020 = st.text_area("Summary 80/20 (5–7 bullets)", value="", height=80, key="chem_8020")
+            chem_shelf = st.number_input("Shelf Life (months)", min_value=0, max_value=120, value=int(extracted.get("shelf_life_months", 0) if extracted else 0), step=1, key="chem_shelf")
+            chem_dc = st.slider("Data Completeness", min_value=0.0, max_value=1.0, value=float(extracted.get("data_completeness", 0.0) if extracted else 0.0), step=0.05, key="chem_dc")
+        chem_sum_8020 = st.text_area("Summary 80/20 (5–7 bullets)", value=extracted.get("summary_80_20", ""), height=80, key="chem_8020")
+        chem_sum_tech = st.text_area("Summary Technical", value=extracted.get("summary_technical", ""), height=100, key="chem_sumtech")
+
+        # Show one-line source indicator
         if extracted:
-            st.caption(f"AI: {extracted.get('summary_80_20','')}")
-        chem_sum_tech = st.text_area("Summary Technical", value="", height=100, key="chem_sumtech")
-        if extracted:
-            st.caption(f"AI: {extracted.get('summary_technical','')}")
+            src = st.session_state.get("chem_ai_source")
+            if src:
+                st.caption(f"Source: {src}")
 
         if st.button("Save Chemical", type="primary"):
             # Basic validations
