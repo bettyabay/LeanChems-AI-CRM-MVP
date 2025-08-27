@@ -763,10 +763,36 @@ def search_chemicals_by_name(query: str) -> list[dict]:
 
 def fetch_chemicals() -> list[dict]:
     try:
-        res = supabase.table("chemical_types").select("*").order("generic_name").execute()
-        return res.data or []
+        # First attempt: ordered by generic_name
+        query = supabase.table("chemical_types").select("*")
+        try:
+            res = query.order("generic_name").execute()
+            data = res.data or []
+            try:
+                st.session_state["chem_fetch_meta"] = {
+                    "count": len(data),
+                    "ordered": True,
+                    "error": getattr(res, "error", None),
+                }
+            except Exception:
+                pass
+            return data
+        except Exception:
+            # Fallback: fetch without order in case ordering causes an error
+            res2 = query.execute()
+            data2 = res2.data or []
+            try:
+                st.session_state["chem_fetch_meta"] = {
+                    "count": len(data2),
+                    "ordered": False,
+                    "error": getattr(res2, "error", None),
+                }
+            except Exception:
+                pass
+            return data2
     except Exception as e:
         st.error(f"Failed to fetch chemicals: {e}")
+        # Final fallback: return empty list
         return []
 
 def create_chemical(payload: dict):
@@ -788,6 +814,44 @@ def analyze_chemical_with_ai(chemical_name: str) -> dict | None:
     try:
         # Helper to normalize output to our 20-field schema
         def _normalize(data: dict) -> dict:
+            import re as _re_norm
+            def parse_int_safe(value) -> int:
+                if value is None:
+                    return 0
+                if isinstance(value, (int, float)):
+                    try:
+                        return int(value)
+                    except Exception:
+                        return 0
+                s = str(value)
+                m = _re_norm.search(r"-?\d+", s)
+                return int(m.group(0)) if m else 0
+            def parse_float_safe(value) -> float:
+                if value is None:
+                    return 0.0
+                if isinstance(value, (int, float)):
+                    try:
+                        return float(value)
+                    except Exception:
+                        return 0.0
+                s = str(value).strip().lower()
+                # map qualitative to numeric
+                if s in {"high", "high confidence"}:
+                    return 0.9
+                if s in {"medium", "moderate"}:
+                    return 0.5
+                if s in {"low", "poor"}:
+                    return 0.2
+                # percentage like '85%'
+                m = _re_norm.search(r"-?\d+(?:\.\d+)?", s)
+                if m:
+                    try:
+                        v = float(m.group(0))
+                        # if looks like percentage >1, scale to 0..1
+                        return v/100.0 if v > 1.0 else v
+                    except Exception:
+                        return 0.0
+                return 0.0
             def ensure_list(value):
                 if value is None:
                     return []
@@ -811,12 +875,12 @@ def analyze_chemical_with_ai(chemical_name: str) -> dict | None:
                 "compatibilities": ensure_list(data.get("compatibilities")),
                 "incompatibilities": ensure_list(data.get("incompatibilities")),
                 "sensitivities": ensure_list(data.get("sensitivities")),
-                "shelf_life_months": int(data.get("shelf_life_months") or 0),
+                "shelf_life_months": parse_int_safe(data.get("shelf_life_months")),
                 "storage_conditions": (data.get("storage_conditions") or "").strip(),
                 "packaging_options": ensure_list(data.get("packaging_options")),
                 "summary_80_20": (data.get("summary_80_20") or "").strip(),
                 "summary_technical": (data.get("summary_technical") or "").strip(),
-                "data_completeness": float(data.get("data_completeness") or 0.0),
+                "data_completeness": parse_float_safe(data.get("data_completeness")),
             }
             dc = normalized["data_completeness"]
             if dc < 0.0:
@@ -932,10 +996,28 @@ Required JSON schema keys (arrays can be empty):
         if not raw:
             st.warning("⚠️ AI response was blocked or empty.")
             return None
+        try:
+            st.session_state["chem_ai_last_raw"] = raw
+        except Exception:
+            pass
         data = _parse_lenient_json(raw)
         if not data or not isinstance(data, dict):
-            st.warning("⚠️ Could not parse AI response as JSON: No JSON object found.")
-            return None
+            # Strict retry: ask for JSON-only, same keys
+            prompt_retry = f"""
+Return a single valid JSON object only. No prose, no code fences. Use empty strings or empty arrays where unknown.
+Keys: ["generic_name","family","synonyms","cas_ids","hs_codes","functional_categories","industry_segments","key_applications","typical_dosage","appearance","physical_snapshot","compatibilities","incompatibilities","sensitivities","shelf_life_months","storage_conditions","packaging_options","summary_80_20","summary_technical","data_completeness"].
+Material: "{name}"
+"""
+            raw_retry = _try_generate_text(prompt_retry)
+            if raw_retry:
+                try:
+                    st.session_state["chem_ai_last_raw"] = raw_retry
+                except Exception:
+                    pass
+                data = _parse_lenient_json(raw_retry)
+            if not data or not isinstance(data, dict):
+                st.warning("⚠️ Could not parse AI response as JSON: No JSON object found.")
+                return None
         return _normalize(data)
     except Exception as e:
         st.error(f"AI analysis error: {e}")
@@ -1408,7 +1490,10 @@ with tab_chem_master:
             if duplicates:
                 st.warning(f"Found {len(duplicates)} possible duplicates:")
                 for d in duplicates[:5]:
-                    st.write(f"• {d.get('name')} — {d.get('segment') or ''} | {d.get('category') or ''}")
+                    dup_name = d.get("generic_name") or "(unnamed)"
+                    dup_seg = ", ".join(d.get("industry_segments") or [])
+                    dup_cat = ", ".join(d.get("functional_categories") or [])
+                    st.write(f"• {dup_name} — {dup_seg} | {dup_cat}")
 
             # AI extraction
             if gemini_model:
@@ -1481,6 +1566,9 @@ with tab_chem_master:
             src = st.session_state.get("chem_ai_source")
             if src:
                 st.caption(f"Source: {src}")
+            # Optional raw output for debugging
+            with st.expander("Show raw AI output", expanded=False):
+                st.code(st.session_state.get("chem_ai_last_raw", ""))
 
         if st.button("Save Chemical", type="primary"):
             # Basic validations
@@ -1552,23 +1640,55 @@ with tab_chem_master:
                 seg_filter = st.text_input("Filter by Industry Segment", placeholder="e.g., Dry-mix")
             with colmf2:
                 cat_filter = st.text_input("Filter by Functional Category", placeholder="e.g., Polymer")
-            search_chem = st.text_input("Search by generic name", placeholder="Start typing...")
+            search_chem = st.text_input("Search by generic name, synonym or application", placeholder="Start typing...")
+            show_all_clicked = st.button("Show All", type="secondary")
+            if st.button("Reset Filters", type="secondary"):
+                seg_filter = ""
+                cat_filter = ""
+                search_chem = ""
 
             chems = fetch_chemicals()
             filtered_chems = []
+            # If no filters provided or user clicked Show All, show everything
+            if show_all_clicked or (not seg_filter and not cat_filter and not search_chem):
+                filtered_chems = chems
+            else:
+                filtered_chems = []
             for c in chems:
-                if seg_filter and (", ".join(c.get("industry_segments") or [])).lower().find(seg_filter.lower()) < 0:
+                # Normalize fields for matching
+                seg_text = ", ".join(c.get("industry_segments") or []).lower()
+                cat_text = ", ".join(c.get("functional_categories") or []).lower()
+                gen_text = (c.get("generic_name") or "").lower()
+                syn_text = ", ".join(c.get("synonyms") or []).lower()
+                app_text = ", ".join(c.get("key_applications") or []).lower()
+
+                if seg_filter and seg_filter.lower() not in seg_text:
                     continue
-                if cat_filter and (", ".join(c.get("functional_categories") or [])).lower().find(cat_filter.lower()) < 0:
+                if cat_filter and cat_filter.lower() not in cat_text:
                     continue
-                if search_chem and (c.get("generic_name") or "").lower().find(search_chem.lower()) < 0:
-                    continue
-                filtered_chems.append(c)
+                if search_chem:
+                    q = search_chem.lower()
+                    if all(q not in field for field in [gen_text, syn_text, cat_text, seg_text, app_text]):
+                        continue
+                if not (show_all_clicked or (not seg_filter and not cat_filter and not search_chem)):
+                    filtered_chems.append(c)
+
+            # Debug meta info (compact)
+            meta = st.session_state.get("chem_fetch_meta")
+            if meta:
+                st.caption(f"Fetched: {meta.get('count', 0)} (ordered={meta.get('ordered')})")
+                if meta.get("error"):
+                    st.warning(f"DB notice: {meta.get('error')}")
 
             if filtered_chems:
                 st.success(f"📋 Found {len(filtered_chems)} chemicals")
             else:
-                st.info("No chemicals match the current filters.")
+                # Fallback: show all chemicals so user can edit/delete
+                if chems:
+                    st.warning("No chemicals match the filters. Showing all chemicals.")
+                    filtered_chems = chems
+                else:
+                    st.info("No chemicals found in the database.")
 
             for chem in filtered_chems:
                 cid = chem.get("id")
