@@ -1641,7 +1641,6 @@ with tab_chem_master:
             with colmf2:
                 cat_filter = st.text_input("Filter by Functional Category", placeholder="e.g., Polymer")
             search_chem = st.text_input("Search by generic name, synonym or application", placeholder="Start typing...")
-            show_all_clicked = st.button("Show All", type="secondary")
             if st.button("Reset Filters", type="secondary"):
                 seg_filter = ""
                 cat_filter = ""
@@ -1649,8 +1648,8 @@ with tab_chem_master:
 
             chems = fetch_chemicals()
             filtered_chems = []
-            # If no filters provided or user clicked Show All, show everything
-            if show_all_clicked or (not seg_filter and not cat_filter and not search_chem):
+            # If no filters provided, show everything by default
+            if not seg_filter and not cat_filter and not search_chem:
                 filtered_chems = chems
             else:
                 filtered_chems = []
@@ -1670,15 +1669,8 @@ with tab_chem_master:
                     q = search_chem.lower()
                     if all(q not in field for field in [gen_text, syn_text, cat_text, seg_text, app_text]):
                         continue
-                if not (show_all_clicked or (not seg_filter and not cat_filter and not search_chem)):
+                if seg_filter or cat_filter or search_chem:
                     filtered_chems.append(c)
-
-            # Debug meta info (compact)
-            meta = st.session_state.get("chem_fetch_meta")
-            if meta:
-                st.caption(f"Fetched: {meta.get('count', 0)} (ordered={meta.get('ordered')})")
-                if meta.get("error"):
-                    st.warning(f"DB notice: {meta.get('error')}")
 
             if filtered_chems:
                 st.success(f"📋 Found {len(filtered_chems)} chemicals")
