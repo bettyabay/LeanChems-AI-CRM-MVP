@@ -17,17 +17,180 @@ except Exception:  # groq sdk may not be installed in some environments
 # Page config
 st.set_page_config(page_title="LeanChems PMS", layout="centered")
 
-# Styling
-st.markdown(
-    """
-    <style>
-    .stApp { background-color: #f5f9ff; }
-    .form-card { background: #fff; padding: 1.25rem 1.5rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-    .hint { color: #475569; font-size: 0.9rem; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+# --- Custom CSS for beautiful UI ---
+st.markdown("""
+<style>
+/* Global Styles */
+body {
+    background-color: #f5f7fa; /* Light background */
+    font-family: 'Segoe UI', sans-serif;
+}
+
+/* Adjust main content area padding for spacious layout */
+.main .block-container {
+    padding-top: 40px;
+    padding-right: 60px;
+    padding-left: 60px;
+    padding-bottom: 40px;
+}
+
+/* Sidebar styling */
+.css-1d391kg, .css-1v0mbdj { /* Adjust these class names if needed based on Streamlit version */
+    background-color: #ffffff;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08); /* Slightly stronger shadow */
+    margin-bottom: 20px;
+}
+
+/* Input fields */
+input {
+    border: 1px solid #e0e0e0; /* Lighter border */
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 16px;
+    width: 100%;
+    margin-bottom: 15px; /* Increased space */
+    background-color: #f9f9f9; /* Slightly different input background */
+}
+
+/* Hide 'Press Enter to apply' text */
+.stTextInput > div > div > input + div {
+    display: none;
+}
+
+/* Buttons */
+button[kind="primary"] {
+    background-color: #1e73c4; /* A shade of blue */
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 20px;
+    font-weight: bold;
+    margin-top: 15px; /* Increased space */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transition: background-color 0.3s ease;
+}
+
+button[kind="primary"]:hover {
+    background-color: #155b9e; /* Darker shade on hover */
+}
+
+/* Header styles */
+h1, h2, h3, h4 {
+    color: #333; /* Darker text for headers */
+    font-weight: 700;
+    margin-bottom: 15px;
+    padding-top: 5px; /* Add some padding above headers */
+}
+
+/* Features layout (Cards) */
+.feature-box {
+    background-color: #ffffff;
+    padding: 25px; /* Increased padding inside cards */
+    border-radius: 16px; /* Rounded corners */
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1); /* More prominent shadow */
+    margin-top: 15px; /* Increased margin */
+    margin-bottom: 15px; /* Increased margin */
+    text-align: left;
+    height: 100%;
+    transition: transform 0.3s ease, box-shadow 0.3s ease; /* Smooth hover effect */
+}
+
+.feature-box:hover {
+    transform: translateY(-5px); /* Lift effect on hover */
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15); /* Enhanced shadow on hover */
+}
+
+.stMarkdown > div > p {
+    margin-bottom: 1rem; /* Standard space below paragraphs */
+    color: #555; /* Slightly lighter text for paragraph */
+}
+
+/* Adjust spacing around columns */
+.st-emotion-l8z9g2 > div { /* This targets the div inside the columns, adjust class name if needed */
+    margin-bottom: 30px; /* Space between rows of columns */
+    padding: 0 10px; /* Add horizontal padding between columns */
+}
+
+/* Center the main content block */
+.css-18e3gdp.e8zbici2 {
+    max-width: 1200px; /* Set a max width for content */
+    margin: auto; /* Center the block */
+}
+
+/* Class for bold text */
+.bold-text {
+    font-weight: bold;
+}
+
+/* Form card styling */
+.form-card { 
+    background: #fff; 
+    padding: 1.25rem 1.5rem; 
+    border-radius: 8px; 
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08); 
+}
+
+.hint { 
+    color: #475569; 
+    font-size: 0.9rem; 
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: #1e1e1e; /* Darker background */
+    }
+    .stApp {
+        background-color: #1e1e1e;
+    }
+    .main .block-container {
+        padding-top: 40px;
+        padding-right: 60px;
+        padding-left: 60px;
+        padding-bottom: 40px;
+    }
+    .css-1d391kg, .css-1v0mbdj {
+        background-color: #2c2c2c;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+    input {
+        border: 1px solid #444;
+        background-color: #333;
+        color: #f0f0f0;
+    }
+    button[kind="primary"] {
+        background-color: #1a4d7d; /* Dark mode blue */
+    }
+    button[kind="primary"]:hover {
+        background-color: #12395a; /* Darker shade on hover */
+    }
+    h1, h2, h3, h4 {
+        color: #f0f0f0;
+    }
+    .feature-box {
+        background-color: #2c2c2c;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+    }
+    .feature-box:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.45);
+    }
+    .stMarkdown > div > p {
+        color: #cccccc;
+    }
+    .form-card {
+        background-color: #2c2c2c;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+    .hint {
+        color: #cccccc;
+    }
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 # Env and client
 load_dotenv()
@@ -503,12 +666,53 @@ def process_tds_with_ai(uploaded_file):
             st.error(f"Could not extract text from file: {text_content}")
             return None
 
-# Tabs
-tab_add, tab_manage, tab_view, tab_chem_master = st.tabs(["Add Product", "Manage Products", "View Products", "Chemical Master Data"]) 
+# Top-level Navigation Buttons
+st.markdown("---")
+nav_cols = st.columns(4)
+if "main_section" not in st.session_state:
+    st.session_state["main_section"] = None
+
+with nav_cols[0]:
+    if st.button("Chemical Master Data", use_container_width=True):
+        st.session_state["main_section"] = "chemical"
+        st.rerun()
+with nav_cols[1]:
+    if st.button("Sourcing Master Data", use_container_width=True):
+        st.session_state["main_section"] = "sourcing"
+        st.rerun()
+with nav_cols[2]:
+    if st.button("LeanChem Product Master Data", use_container_width=True):
+        st.session_state["main_section"] = "leanchem"
+        st.rerun()
+with nav_cols[3]:
+    if st.button("Market Master Data", use_container_width=True):
+        st.session_state["main_section"] = "market"
+        st.rerun()
+st.markdown("---")
+
+# Prepare Sourcing sub-navigation when active
+if st.session_state.get("main_section") == "sourcing":
+    st.markdown("<h3>Sourcing Master Data</h3>", unsafe_allow_html=True)
+    sub_cols = st.columns(3)
+    if "sourcing_section" not in st.session_state:
+        st.session_state["sourcing_section"] = "add"
+    with sub_cols[0]:
+        if st.button("Add TDS", use_container_width=True):
+            st.session_state["sourcing_section"] = "add"
+            st.rerun()
+    with sub_cols[1]:
+        if st.button("Manage TDS", use_container_width=True):
+            st.session_state["sourcing_section"] = "manage"
+            st.rerun()
+    with sub_cols[2]:
+        if st.button("View TDS", use_container_width=True):
+            st.session_state["sourcing_section"] = "view"
+            st.rerun()
+    st.markdown("---")
 
 # UI - Add Product
-with tab_add:
-    st.markdown('<h1 style="color:#1976d2; font-weight:700;">Add Product</h1>', unsafe_allow_html=True)
+if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "add":
+    st.markdown('<h1 style="color:#1976d2; font-weight:700;">Add TDS / Sourcing</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
     with st.container():
@@ -671,7 +875,7 @@ with tab_add:
 
 
 
-        submitted = st.button("Save Product", type="primary")
+        submitted = st.button("Save Record", type="primary")
 
     if submitted:
         # Validate name
@@ -723,7 +927,7 @@ with tab_add:
                     }
 
                     supabase.table("product_master").insert(payload).execute()
-                    st.success("✅ Product saved successfully")
+                    st.success("✅ Record saved successfully")
                 except Exception as e:
                     st.error(f"Failed to save product: {e}")
 
@@ -1054,8 +1258,8 @@ def build_version_entry(prod, updates):
     return history
 
 # UI - Manage Products
-with tab_manage:
-    st.markdown('<h1 style="color:#1976d2; font-weight:700;">Manage Products</h1>', unsafe_allow_html=True)
+if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "manage":
+    st.markdown('<h1 style="color:#1976d2; font-weight:700;">Manage TDS</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
     # Authorization: only managers can access Manage tab
@@ -1287,8 +1491,8 @@ with tab_manage:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # UI - View Products
-with tab_view:
-    st.markdown('<h1 style="color:#1976d2; font-weight:700;">View Products</h1>', unsafe_allow_html=True)
+if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "view":
+    st.markdown('<h1 style="color:#1976d2; font-weight:700;">View TDS</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
     # Category selection
@@ -1460,7 +1664,7 @@ with tab_view:
 # ==========================
 # UI - Chemical Master Data
 # ==========================
-with tab_chem_master:
+if st.session_state.get("main_section") == "chemical":
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">Chemical Master Data</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
@@ -1520,6 +1724,38 @@ with tab_chem_master:
                 return data if isinstance(data, list) else []
             except Exception:
                 return []
+        # Accept either a JSON array or one-JSON-object-per-line without brackets
+        def parse_json_lines_or_array(text_val: str):
+            try:
+                import json as _json_p
+                txt = (text_val or "").strip()
+                if not txt:
+                    return []
+                # Try array first
+                try:
+                    arr = _json_p.loads(txt)
+                    if isinstance(arr, list):
+                        return arr
+                    if isinstance(arr, dict):
+                        return [arr]
+                except Exception:
+                    pass
+                # Fallback: parse one JSON object per non-empty line
+                items = []
+                for line in txt.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = _json_p.loads(line)
+                        if isinstance(obj, dict):
+                            items.append(obj)
+                    except Exception:
+                        # ignore unparsable lines
+                        continue
+                return items
+            except Exception:
+                return []
 
         # Helper to show AI suggestion text under each control
         import json as _json_for_ai_view
@@ -1532,6 +1768,14 @@ with tab_chem_master:
                 except Exception:
                     return str(value)
             return str(value)
+        # Render list of objects as newline-delimited JSON objects (no square brackets)
+        def _ai_list_as_lines(value):
+            try:
+                if isinstance(value, list):
+                    return "\n".join(_json_for_ai_view.dumps(v, ensure_ascii=False) for v in value)
+                return _ai_view(value)
+            except Exception:
+                return _ai_view(value)
 
         # Prefilled editable fields (no extra AI captions)
         colc1, colc2 = st.columns(2)
@@ -1544,12 +1788,16 @@ with tab_chem_master:
             chem_inds = st.text_input("Industry Segments (comma-separated)", value=csv_default(extracted.get("industry_segments", [])), key="chem_inds")
             chem_keys = st.text_input("Key Applications (comma-separated)", value=csv_default(extracted.get("key_applications", [])), key="chem_keys")
         with colc2:
-            chem_hs_json = st.text_area("HS Codes JSON (array of {region,code})", value=_ai_view(extracted.get("hs_codes")) if extracted else "", height=80, key="chem_hs_json")
-            chem_dosage_json = st.text_area("Typical Dosage JSON (array of {application,range})", value=_ai_view(extracted.get("typical_dosage")) if extracted else "", height=80, key="chem_dosage_json")
-            chem_phys_json = st.text_area("Physical Snapshot JSON (array of {name,value,unit,method})", value=_ai_view(extracted.get("physical_snapshot")) if extracted else "", height=80, key="chem_phys_json")
+            chem_hs_json = st.text_area("HS Codes (one JSON object per line: {region,code})", value=_ai_list_as_lines(extracted.get("hs_codes")) if extracted else "", height=80, key="chem_hs_json")
+            # Place Summary 80/20 immediately after Generic Name (left) and HS Codes (right)
+            chem_sum_8020 = st.text_area("Summary 80/20 (5–7 bullets)", value=extracted.get("summary_80_20", ""), height=80, key="chem_8020")
+            chem_dosage_json = st.text_area("Typical Dosage (one JSON object per line: {application,range})", value=_ai_list_as_lines(extracted.get("typical_dosage")) if extracted else "", height=80, key="chem_dosage_json")
+            chem_phys_json = st.text_area("Physical Snapshot (one JSON object per line: {name,value,unit,method})", value=_ai_list_as_lines(extracted.get("physical_snapshot")) if extracted else "", height=80, key="chem_phys_json")
             chem_compat = st.text_input("Compatibilities (comma-separated)", value=csv_default(extracted.get("compatibilities", [])), key="chem_compat")
             chem_incompat = st.text_input("Incompatibilities (comma-separated)", value=csv_default(extracted.get("incompatibilities", [])), key="chem_incompat")
             chem_sens = st.text_input("Sensitivities (comma-separated)", value=csv_default(extracted.get("sensitivities", [])), key="chem_sens")
+
+        # Summary 80/20 moved above (after HS Codes)
         colc3, colc4 = st.columns(2)
         with colc3:
             chem_appearance = st.text_input("Appearance", value=extracted.get("appearance", ""), key="chem_appearance")
@@ -1558,7 +1806,6 @@ with tab_chem_master:
         with colc4:
             chem_shelf = st.number_input("Shelf Life (months)", min_value=0, max_value=120, value=int(extracted.get("shelf_life_months", 0) if extracted else 0), step=1, key="chem_shelf")
             chem_dc = st.slider("Data Completeness", min_value=0.0, max_value=1.0, value=float(extracted.get("data_completeness", 0.0) if extracted else 0.0), step=0.05, key="chem_dc")
-        chem_sum_8020 = st.text_area("Summary 80/20 (5–7 bullets)", value=extracted.get("summary_80_20", ""), height=80, key="chem_8020")
         chem_sum_tech = st.text_area("Summary Technical", value=extracted.get("summary_technical", ""), height=100, key="chem_sumtech")
 
         # Show one-line source indicator
@@ -1592,7 +1839,7 @@ with tab_chem_master:
                             return lst
                         return ai.get(ai_key) or []
                     def prefer_manual_jsonarr(manual: str, ai_key: str):
-                        arr = parse_json_list(manual)
+                        arr = parse_json_lines_or_array(manual)
                         if arr:
                             return arr
                         return ai.get(ai_key) or []
@@ -1837,5 +2084,23 @@ with tab_chem_master:
                     if dosage:
                         st.caption(f"Typical Dosage: {__import__('json').dumps(dosage)}")
 
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ==========================
+# UI - LeanChem Product Master Data (placeholder)
+# ==========================
+if st.session_state.get("main_section") == "leanchem":
+    st.markdown('<h1 style="color:#1976d2; font-weight:700;">LeanChem Product Master Data</h1>', unsafe_allow_html=True)
+    st.markdown('<div class="form-card">', unsafe_allow_html=True)
+    st.info("🚧 Coming soon")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ==========================
+# UI - Market Master Data (placeholder)
+# ==========================
+if st.session_state.get("main_section") == "market":
+    st.markdown('<h1 style="color:#1976d2; font-weight:700;">Market Master Data</h1>', unsafe_allow_html=True)
+    st.markdown('<div class="form-card">', unsafe_allow_html=True)
+    st.info("🚧 Coming soon")
     st.markdown('</div>', unsafe_allow_html=True)
 
