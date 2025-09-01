@@ -15,126 +15,466 @@ except Exception:  # groq sdk may not be installed in some environments
     Groq = None  # type: ignore
 
 # Page config
-st.set_page_config(page_title="LeanChems PMS", layout="centered")
+def main():
+    st.set_page_config(
+        page_title="Leanchems Product Management System",
+        page_icon="🧪",
+        layout="wide",  # Changed from "centered" to "wide"
+        initial_sidebar_state="collapsed"
+    )
 
-# --- Custom CSS for beautiful UI ---
+# --- Enhanced Custom CSS for Modern UI ---
 st.markdown("""
 <style>
+/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 /* Global Styles */
-body {
-    background-color: #f5f7fa; /* Light background */
-    font-family: 'Segoe UI', sans-serif;
+.stApp {
+    background: white;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* Adjust main content area padding for spacious layout */
+/* Login screen background - only when not authenticated */
+.stApp:has(.wide-login-container) {
+    background: linear-gradient(135deg, #60a5fa 0%, #93c5fd 100%);
+}
+
+/* Main content container */
 .main .block-container {
-    padding-top: 40px;
-    padding-right: 60px;
-    padding-left: 60px;
-    padding-bottom: 40px;
+    background: rgba(248, 250, 252, 0.95);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+    padding: 1rem 2rem;
+    margin: 0.25rem;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
+    border: 1px solid rgba(147, 197, 253, 0.15);
+    max-width: 4000px;
+    width: 98vw;
+    margin-left: auto;
+    margin-right: auto;
+    min-height: calc(100vh - 200px);
+    height: auto;
 }
 
-/* Sidebar styling */
-.css-1d391kg, .css-1v0mbdj { /* Adjust these class names if needed based on Streamlit version */
-    background-color: #ffffff;
-    border-radius: 12px;
-    padding: 20px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08); /* Slightly stronger shadow */
-    margin-bottom: 20px;
-}
-
-/* Input fields */
-input {
-    border: 1px solid #e0e0e0; /* Lighter border */
-    border-radius: 10px;
-    padding: 12px;
-    font-size: 16px;
+/* Dashboard content spacing and layout */
+.dashboard-content {
+    padding: 0.5rem 0;
+    min-height: calc(100vh - 300px);
     width: 100%;
-    margin-bottom: 15px; /* Increased space */
-    background-color: #f9f9f9; /* Slightly different input background */
 }
 
-/* Hide 'Press Enter to apply' text */
-.stTextInput > div > div > input + div {
-    display: none;
+/* Feature boxes and form cards spacing */
+.feature-box, .form-card {
+    margin: 1rem 0;
+    padding: 1.5rem;
+    width: 100%;
 }
 
-/* Buttons */
+/* Remove default Streamlit padding that creates gaps */
+.stMarkdown, .stDataFrame, .stButton, .stSelectbox, .stTextInput, .stTextArea {
+    margin: 0;
+    padding: 0;
+}
+
+/* Additional layout improvements */
+.stApp > div:first-child {
+    padding: 0;
+    margin: 0;
+}
+
+/* Ensure content flows properly */
+.main .block-container > div {
+    margin: 0;
+    padding: 0;
+}
+
+/* Better spacing for form elements */
+.stForm > div {
+    margin: 0.5rem 0;
+    padding: 0;
+}
+
+/* Login Screen Styling */
+            .login-container {
+                background: rgba(255, 255, 255, 0.95);
+                backdrop-filter: blur(20px);
+                border-radius: 20px;
+                padding: 0.5rem 0.25rem;
+                margin: 1rem auto;
+                max-width: 100px;
+                width: 100px;
+                box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+            }
+
+/* Header Enhancements */
+.header-container {
+    background: rgba(248, 250, 252, 0.9);
+    backdrop-filter: blur(10px);
+    border-radius: 15px;
+    padding: 1.5rem 2rem;
+    margin: 0.25rem 0.25rem 1rem 0.25rem;
+    border: 1px solid rgba(147, 197, 253, 0.15);
+    max-width: 4000px;
+    width: 98vw;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Navigation Button Styling */
+.nav-button {
+    background: linear-gradient(145deg, #f8fafc, #e2e8f0);
+    border: 1px solid rgba(147, 197, 253, 0.3);
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    margin: 0.5rem;
+    text-align: center;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+}
+
+.nav-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(147, 197, 253, 0.15);
+    border-color: #93c5fd;
+    background: linear-gradient(145deg, #93c5fd, #60a5fa);
+    color: white;
+}
+
+.nav-button.active {
+    background: linear-gradient(145deg, #93c5fd, #60a5fa);
+    color: white;
+    border-color: #93c5fd;
+    box-shadow: 0 8px 25px rgba(147, 197, 253, 0.25);
+}
+
+/* Input Field Styling */
+            .stTextInput > div > div > input,
+            .stTextArea > div > div > textarea,
+            .stSelectbox > div > div > select {
+                background: rgba(255, 255, 255, 0.9);
+                border: 2px solid rgba(147, 197, 253, 0.2);
+                border-radius: 12px;
+                padding: 0.75rem 1rem;
+                font-size: 0.95rem;
+                transition: all 0.3s ease;
+                backdrop-filter: blur(10px);
+                /* Removed global width constraints */
+            }
+            
+            /* Target the input containers specifically within login form */
+            .login-container .stTextInput > div {
+                max-width: 80px !important;
+                width: 80px !important;
+            }
+            
+            .login-container .stTextInput > div > div {
+                max-width: 80px !important;
+                width: 80px !important;
+            }
+            
+            /* Target the actual input element within the login form */
+            .login-container .stTextInput > div > div > input {
+                max-width: 80px !important;
+                width: 80px !important;
+                min-width: 80px !important;
+                flex-basis: 80px !important;
+            }
+            
+            /* Target the Streamlit form container within login */
+            .login-container form {
+                max-width: 80px !important;
+                width: 80px !important;
+            }
+            
+            /* Target all form elements within login container */
+            .login-container form > div {
+                max-width: 80px !important;
+                width: 80px !important;
+            }
+            
+            /* Override any Streamlit default styling */
+            .login-container .stTextInput {
+                max-width: 80px !important;
+                width: 80px !important;
+                min-width: 80px !important;
+            }
+            
+            /* Force all input-related elements to be narrow */
+            .login-container input[type="text"],
+            .login-container input[type="password"],
+            .login-container input[type="email"] {
+                max-width: 80px !important;
+                width: 80px !important;
+                min-width: 80px !important;
+                box-sizing: border-box !important;
+            }
+            
+            /* Additional aggressive targeting for Streamlit components */
+            .login-container [data-testid="stTextInput"] {
+                max-width: 80px !important;
+                width: 80px !important;
+                min-width: 80px !important;
+            }
+            
+            .login-container [data-testid="stTextInput"] > div {
+                max-width: 80px !important;
+                width: 80px !important;
+                min-width: 80px !important;
+            }
+            
+            .login-container [data-testid="stTextInput"] > div > div {
+                max-width: 80px !important;
+                width: 80px !important;
+                min-width: 80px !important;
+            }
+            
+            .login-container [data-testid="stTextInput"] > div > div > input {
+                max-width: 80px !important;
+                width: 80px !important;
+                min-width: 80px !important;
+                flex-basis: 80px !important;
+            }
+            
+            /* Debug styling - add a border to see the actual input area */
+            .login-container .stTextInput {
+                border: 2px solid red !important;
+            }
+            
+            .login-container .stTextInput > div {
+                border: 2px solid blue !important;
+            }
+            
+            .login-container .stTextInput > div > div {
+                border: 2px solid green !important;
+            }
+            
+            .login-container .stTextInput > div > div > input {
+                border: 2px solid orange !important;
+            }
+            
+            /* Override Streamlit's default form styling */
+            .login-container .stForm {
+                max-width: 80px !important;
+                width: 80px !important;
+            }
+            
+            /* Target Streamlit's internal form elements */
+            .login-container [data-testid="stForm"] {
+                max-width: 80px !important;
+                width: 80px !important;
+            }
+            
+            /* Override any flex properties */
+            .login-container .stTextInput > div {
+                flex: none !important;
+                flex-shrink: 1 !important;
+                flex-grow: 0 !important;
+            }
+            
+            /* Force all Streamlit elements to respect our width */
+            .login-container * {
+                max-width: 80px !important;
+                box-sizing: border-box !important;
+            }
+
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus,
+.stSelectbox > div > div > select:focus {
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.1);
+    outline: none;
+}
+
+/* Button Styling */
 button[kind="primary"] {
-    background-color: #1e73c4; /* A shade of blue */
+    background: linear-gradient(145deg, #93c5fd, #60a5fa);
     color: white;
     border: none;
-    border-radius: 10px;
-    padding: 12px 20px;
-    font-weight: bold;
-    margin-top: 15px; /* Increased space */
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    transition: background-color 0.3s ease;
+    border-radius: 12px;
+    padding: 0.75rem 2rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    box-shadow: 0 6px 20px rgba(147, 197, 253, 0.3);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
 }
 
 button[kind="primary"]:hover {
-    background-color: #155b9e; /* Darker shade on hover */
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(147, 197, 253, 0.4);
 }
 
-/* Header styles */
+button[kind="secondary"] {
+    background: rgba(255, 255, 255, 0.9);
+    color: #93c5fd;
+    border: 2px solid rgba(147, 197, 253, 0.3);
+    border-radius: 12px;
+    padding: 0.75rem 1.5rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+button[kind="secondary"]:hover {
+    background: rgba(147, 197, 253, 0.1);
+    border-color: #93c5fd;
+    transform: translateY(-1px);
+}
+
+/* Header Typography */
 h1, h2, h3, h4 {
-    color: #333; /* Darker text for headers */
+    color: #2d3748;
     font-weight: 700;
-    margin-bottom: 15px;
-    padding-top: 5px; /* Add some padding above headers */
+    margin-bottom: 1.5rem;
+    letter-spacing: -0.025em;
 }
 
-/* Features layout (Cards) */
-.feature-box {
-    background-color: #ffffff;
-    padding: 25px; /* Increased padding inside cards */
-    border-radius: 16px; /* Rounded corners */
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1); /* More prominent shadow */
-    margin-top: 15px; /* Increased margin */
-    margin-bottom: 15px; /* Increased margin */
-    text-align: left;
-    height: 100%;
-    transition: transform 0.3s ease, box-shadow 0.3s ease; /* Smooth hover effect */
+h1 {
+    background: linear-gradient(145deg, #93c5fd, #60a5fa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-size: 2.5rem;
 }
 
-.feature-box:hover {
-    transform: translateY(-5px); /* Lift effect on hover */
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15); /* Enhanced shadow on hover */
+h2 {
+    color: #4a5568;
+    font-size: 1.875rem;
 }
 
-.stMarkdown > div > p {
-    margin-bottom: 1rem; /* Standard space below paragraphs */
-    color: #555; /* Slightly lighter text for paragraph */
+/* Card Styling */
+.feature-box, .form-card {
+    background: rgba(248, 250, 252, 0.95);
+    backdrop-filter: blur(15px);
+    padding: 1.5rem;
+    border-radius: 16px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    margin: 0.75rem 0;
+    border: 1px solid rgba(147, 197, 253, 0.15);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 100%;
 }
 
-/* Adjust spacing around columns */
-.st-emotion-l8z9g2 > div { /* This targets the div inside the columns, adjust class name if needed */
-    margin-bottom: 30px; /* Space between rows of columns */
-    padding: 0 10px; /* Add horizontal padding between columns */
+.feature-box:hover, .form-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
 }
 
-/* Center the main content block */
-.css-18e3gdp.e8zbici2 {
-    max-width: 1200px; /* Set a max width for content */
-    margin: auto; /* Center the block */
+/* Expander Styling */
+.streamlit-expanderHeader {
+    background: linear-gradient(145deg, #f7fafc, #edf2f7);
+    border-radius: 12px;
+    border: 1px solid rgba(147, 197, 253, 0.2);
+    font-weight: 600;
+    color: #4a5568;
 }
 
-/* Class for bold text */
-.bold-text {
-    font-weight: bold;
+/* Sidebar Enhancements */
+.css-1d391kg, .css-1v0mbdj {
+    background: rgba(248, 250, 252, 0.95);
+    backdrop-filter: blur(15px);
+    border-radius: 16px;
+    padding: 1.5rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    border: 1px solid rgba(147, 197, 253, 0.15);
 }
 
-/* Form card styling */
-.form-card { 
-    background: #fff; 
-    padding: 1.25rem 1.5rem; 
-    border-radius: 8px; 
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08); 
+/* Success/Error Messages */
+.stSuccess {
+    background: linear-gradient(145deg, #48bb78, #38a169);
+    color: white;
+    border-radius: 12px;
+    padding: 1rem;
+    border: none;
+}
+
+.stError {
+    background: linear-gradient(145deg, #f56565, #e53e3e);
+    color: white;
+    border-radius: 12px;
+    padding: 1rem;
+    border: none;
+}
+
+.stWarning {
+    background: linear-gradient(145deg, #ed8936, #dd6b20);
+    color: white;
+    border-radius: 12px;
+    padding: 1rem;
+    border: none;
+}
+
+.stInfo {
+    background: linear-gradient(145deg, #4299e1, #3182ce);
+    color: white;
+    border-radius: 12px;
+    padding: 1rem;
+    border: none;
+}
+
+/* Hide Streamlit Default Elements */
+.stTextInput > div > div > input + div,
+.stDeployButton,
+.stDecoration {
+    display: none;
+}
+
+/* Caption Styling */
+.caption {
+    color: #718096;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+/* Metrics and Statistics */
+.metric-card {
+    background: linear-gradient(145deg, #ffffff, #f7fafc);
+    border-radius: 12px;
+    padding: 1.5rem;
+    text-align: center;
+    border: 1px solid rgba(147, 197, 253, 0.1);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+}
+
+/* Animation Classes */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in-up {
+    animation: fadeInUp 0.6s ease-out;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .main .block-container {
+        padding: 1rem;
+        margin: 0.5rem;
+    }
+    
+    .login-container {
+        margin: 1rem;
+        padding: 2rem 1.5rem;
+    }
+    
+    h1 {
+        font-size: 2rem;
+    }
 }
 
 .hint { 
-    color: #475569; 
-    font-size: 0.9rem; 
+    color: #718096; 
+    font-size: 0.875rem;
+    font-weight: 400;
 }
 
 /* Dark mode adjustments */
@@ -144,6 +484,10 @@ h1, h2, h3, h4 {
     }
     .stApp {
         background-color: #1e1e1e;
+    }
+    /* Login screen background in dark mode */
+    .stApp:has(.wide-login-container) {
+        background: linear-gradient(135deg, #60a5fa 0%, #93c5fd 100%);
     }
     .main .block-container {
         padding-top: 40px;
@@ -187,6 +531,17 @@ h1, h2, h3, h4 {
     .hint {
         color: #cccccc;
     }
+}
+
+.wide-login-container {
+    background: linear-gradient(135deg, #f8fafc, #e2e8f0);
+    backdrop-filter: blur(20px);
+    border-radius: 25px;
+    padding: 2rem 3rem;
+    margin: 1.5rem auto;
+    max-width: 4000px;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 </style>
@@ -280,9 +635,119 @@ if "sb_session" in st.session_state:
     except Exception:
         pass
 
+# ---------- Strict Auth Gate (login required for any access) ----------
+def _render_login_screen():
+    # Full width login container with logo and title aligned
+    st.markdown("""
+    <div class="wide-login-container fade-in-up">
+        <div style="display: flex; align-items: center; gap: 2rem; margin-bottom: 2rem; background: rgba(255, 255, 255, 0.95); padding: 1.5rem; border-radius: 15px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);">
+            <div style="flex-shrink: 0;">
+                <img src="data:image/png;base64,{}" style="width: 80px; height: auto; display: block;" alt="LeanChems Logo">
+            </div>
+            <div style="flex-grow: 1;">
+                <h1 style="margin-bottom: 0.5rem; background: linear-gradient(145deg, #93c5fd, #60a5fa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-size: 2.2rem;">Leanchems</h1>
+                <h2 style="margin: 0; color: #1e40af; font-size: 1.8rem; font-weight: 600;">Product Management System</h2>
+            </div>
+        </div>
+        <p style="color: #718096; margin-top: 1rem; font-size: 1.1rem; text-align: center;">Sign in to access your dashboard</p>
+    </div>
+    """.format(_get_logo_base64()), unsafe_allow_html=True)
+    
+    # Login form - always visible
+    with st.form("login_form_full", clear_on_submit=False):
+        st.markdown('<div class="login-container">', unsafe_allow_html=True)
+        email = st.text_input("📧 Email Address", placeholder="you@example.com", help="Enter your registered email address")
+        password = st.text_input("🔐 Password", type="password", placeholder="Enter your password", help="Enter your account password")
+        
+        # Center the button without using columns
+        st.markdown('<div style="text-align: center; margin-top: 1rem;">', unsafe_allow_html=True)
+        submit = st.form_submit_button("🚀 Sign In", use_container_width=False, type="primary")
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    if submit:
+        if not email or not password:
+            st.error("🚫 Please enter both email and password")
+        else:
+            with st.spinner("🔐 Authenticating..."):
+                try:
+                    resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                    if resp and getattr(resp, "user", None) and getattr(resp, "session", None):
+                        user_role = ((resp.user.user_metadata or {}).get("role") if hasattr(resp.user, "user_metadata") else None) or "viewer"
+                        st.session_state["sb_user"] = {
+                            "id": resp.user.id,
+                            "email": resp.user.email,
+                            "role": user_role,
+                        }
+                        st.session_state["sb_session"] = {
+                            "access_token": resp.session.access_token,
+                            "refresh_token": resp.session.refresh_token,
+                        }
+                        st.success("✅ Login successful! Redirecting...")
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid login response")
+                except Exception as e:
+                    st.error(f"❌ Login failed: {e}")
+    
+    # System description with three key points
+    st.markdown("""
+    <div style="margin-top: 3rem; padding: 2rem; background: rgba(255, 255, 255, 0.95); border-radius: 15px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);">
+        <h3 style="text-align: center; color: #1e40af; margin-bottom: 1.5rem; font-size: 1.4rem; font-weight: 600;">What Our System Does</h3>
+        <div style="display: grid; grid-template-columns: 1fr; gap: 1.5rem; max-width: 600px; margin: 0 auto;">
+            <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: rgba(147, 197, 253, 0.1); border-radius: 10px; border-left: 4px solid #60a5fa;">
+                <div style="font-size: 1.5rem;">🤖</div>
+                <div>
+                    <h4 style="margin: 0 0 0.25rem 0; color: #1e40af; font-size: 1.1rem; font-weight: 600;">AI-Powered Chemical Intelligence</h4>
+                    <p style="margin: 0; color: #4b5563; font-size: 0.95rem;">Advanced AI algorithms for comprehensive chemical data analysis and master data management</p>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: rgba(147, 197, 253, 0.1); border-radius: 10px; border-left: 4px solid #60a5fa;">
+                <div style="font-size: 1.5rem;">🔗</div>
+                <div>
+                    <h4 style="margin: 0 0 0.25rem 0; color: #1e40af; font-size: 1.1rem; font-weight: 600;">Strategic Sourcing Solutions</h4>
+                    <p style="margin: 0; color: #4b5563; font-size: 0.95rem;">Comprehensive supplier management and sourcing optimization for chemical procurement</p>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: rgba(147, 197, 253, 0.1); border-radius: 10px; border-left: 4px solid #60a5fa;">
+                <div style="font-size: 1.5rem;">🗺️</div>
+                <div>
+                    <h4 style="margin: 0 0 0.25rem 0; color: #1e40af; font-size: 1.1rem; font-weight: 600;">Market Intelligence & Mapping</h4>
+                    <p style="margin: 0; color: #4b5563; font-size: 0.95rem;">Real-time market analysis and competitive intelligence for informed decision-making</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div style="text-align: center; margin-top: 2rem; color: #718096; font-size: 0.875rem;">
+        <p>🔒 Secure authentication powered by Supabase</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def _require_login():
+    if not st.session_state.get("sb_user"):
+        _render_login_screen()
+        st.stop()
+
 # Branding and Auth
-# Optional logo via env var
-LEAN_CHEMS_LOGO_URL = os.getenv("LEAN_CHEMS_LOGO_URL")
+# Local logo file - use absolute path for reliability
+LEAN_CHEMS_LOGO_URL = os.path.join(os.path.dirname(__file__), "leanchems_logo.png")
+
+def _get_logo_base64():
+    """Convert logo image to base64 for embedding in HTML"""
+    try:
+        if LEAN_CHEMS_LOGO_URL and os.path.exists(LEAN_CHEMS_LOGO_URL):
+            with open(LEAN_CHEMS_LOGO_URL, "rb") as img_file:
+                return base64.b64encode(img_file.read()).decode()
+        else:
+            # Return a placeholder if logo doesn't exist
+            return ""
+    except Exception as e:
+        st.error(f"Error loading logo: {e}")
+        return ""
+
 MANAGER_EMAILS = {e.strip().lower() for e in (os.getenv("MANAGER_EMAILS", "").split(",")) if e.strip()}
 MANAGER_DOMAIN = (os.getenv("MANAGER_DOMAIN") or "").strip().lower()
 
@@ -294,61 +759,133 @@ def get_manager_emails_from_db() -> set:
     except Exception:
         return set()
 
-col_logo, col_title, col_user = st.columns([1, 3, 2])
-with col_logo:
-    if LEAN_CHEMS_LOGO_URL:
-        st.image(LEAN_CHEMS_LOGO_URL, use_container_width=False, width=96)
+# Enforce login before rendering any content
+_require_login()
+
+# Enhanced Header Section - Wider Layout
+st.markdown('<div class="header-container fade-in-up">', unsafe_allow_html=True)
+
+# Main header content in wider columns
+col_title, col_user = st.columns([3, 1])
 with col_title:
-    st.markdown('<h2 style="color:#0f172a; font-weight:800; margin-bottom:0;">LeanChems Product Management System</h2>', unsafe_allow_html=True)
+    st.markdown('''
+    <div style="text-align: center;">
+        <h1 style="margin-bottom: 0.5rem; background: linear-gradient(145deg, #93c5fd, #60a5fa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-size: 1.9rem;">
+            Leanchems Product Management System
+        </h1>
+        <p style="color: #718096; margin: 0; font-size: 1rem;">Comprehensive Chemical & Product Data Management</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
 with col_user:
-    # Auth UI
     sb_user = st.session_state.get("sb_user")
-    if not sb_user:
-        with st.form("login_form", clear_on_submit=False):
-            email = st.text_input("Email", placeholder="you@example.com")
-            password = st.text_input("Password", type="password")
-            login_clicked = st.form_submit_button("Sign in")
-        if login_clicked:
-            try:
-                resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                if resp and getattr(resp, "user", None) and getattr(resp, "session", None):
-                    user_role = ((resp.user.user_metadata or {}).get("role") if hasattr(resp.user, "user_metadata") else None) or "viewer"
-                    st.session_state["sb_user"] = {
-                        "id": resp.user.id,
-                        "email": resp.user.email,
-                        "role": user_role,
-                    }
-                    st.session_state["sb_session"] = {
-                        "access_token": resp.session.access_token,
-                        "refresh_token": resp.session.refresh_token,
-                    }
-                    st.rerun()
-                else:
-                    st.error("Invalid login response")
-            except Exception as e:
-                st.error(f"Login failed: {e}")
-    else:
-        _email_lc = (sb_user.get('email') or '').lower()
-        _role = (sb_user.get('role') or '').lower()
-        # Check if user is in managers table
-        db_manager_emails = get_manager_emails_from_db()
-        _is_mgr_display = (_role in {"manager", "admin"}) or (_email_lc in MANAGER_EMAILS) or (_email_lc in db_manager_emails)
-        _role_text = "Manager" if _is_mgr_display else "Viewer"
-        st.caption(f"Signed in as {sb_user.get('email')} — {_role_text}")
-        
-        if st.button("Sign out"):
-            try:
-                supabase.auth.sign_out()
-            except Exception:
-                pass
-            for k in ["sb_user", "sb_session"]:
-                st.session_state.pop(k, None)
-            st.rerun()
+    _email_lc = (sb_user.get('email') or '').lower()
+    _role = (sb_user.get('role') or '').lower()
+    # Check if user is in managers table
+    db_manager_emails = get_manager_emails_from_db()
+    _is_mgr_display = (_role in {"manager", "admin"}) or (_email_lc in MANAGER_EMAILS) or (_email_lc in db_manager_emails)
+    _role_text = "Manager" if _is_mgr_display else "Viewer"
+    
+    st.markdown(f'''
+    <div style="text-align: right; padding: 1rem;">
+        <div style="color: #4a5568; font-weight: 600; margin-bottom: 0.5rem;">
+            👤 {sb_user.get('email')}
+        </div>
+        <div style="color: #718096; font-size: 0.875rem; margin-bottom: 1rem;">
+            🎭 {_role_text}
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    if st.button("🚪 Sign Out", type="secondary", use_container_width=True):
+        try:
+            supabase.auth.sign_out()
+        except Exception:
+            pass
+        for k in ["sb_user", "sb_session"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 # Derived access flags
 sb_user = st.session_state.get("sb_user")
 user_role = (sb_user or {}).get("role", "viewer")
 user_email = ((sb_user or {}).get("email") or "").strip().lower()
+
+# Role-based access control constants
+CHEMICAL_MASTER_ACCESS = {
+    "daniel@leanchems.com",
+    "bettyabay@leanchems.com", 
+    "alhadi@leanchems.com"
+}
+
+SOURCING_MASTER_ACCESS = {
+    "iman@leanchems.com",
+    "meraf@leanchems.com", 
+    "alhadi@leanchems.com",
+    "bettyabay@leanchems.com"
+}
+
+def has_chemical_master_access(user_email: str) -> bool:
+    """Check if user has access to Chemical Master Data"""
+    if not user_email:
+        return False
+    user_email_lower = user_email.strip().lower()
+    return user_email_lower in CHEMICAL_MASTER_ACCESS
+
+def has_sourcing_master_access(user_email: str) -> bool:
+    """Check if user has access to Sourcing Master Data"""
+    if not user_email:
+        return False
+    user_email_lower = user_email.strip().lower()
+    return user_email_lower in SOURCING_MASTER_ACCESS
+
+def get_user_access_levels(user_email: str) -> dict:
+    """Get user's access levels for different modules"""
+    if not user_email:
+        return {
+            "chemical": False,
+            "sourcing": False,
+            "leanchem": False,
+            "market": False
+        }
+    
+    user_email_lower = user_email.strip().lower()
+    
+    # bettyabay@leanchems.com has access to all functions
+    if user_email_lower == "bettyabay@leanchems.com":
+        return {
+            "chemical": True,
+            "sourcing": True,
+            "leanchem": True,
+            "market": True
+        }
+    
+    return {
+        "chemical": has_chemical_master_access(user_email),
+        "sourcing": has_sourcing_master_access(user_email),
+        "leanchem": True,  # All users can access LeanChem Products
+        "market": True      # All users can access Market Data
+    }
+
+# User Access Information Display
+if user_email:
+    user_access = get_user_access_levels(user_email)
+    access_info = []
+    if user_access["chemical"]:
+        access_info.append("Chemical Master Data")
+    if user_access["sourcing"]:
+        access_info.append("Sourcing Master Data")
+    if user_access["leanchem"]:
+        access_info.append("LeanChem Products")
+    if user_access["market"]:
+        access_info.append("Market Data")
+    
+    if access_info:
+        st.info(f"🔐 **Access Granted:** You have access to: {', '.join(access_info)}")
+    else:
+        st.warning("⚠️ **No Access:** You don't have access to any modules. Please contact your administrator.")
 
 # Aggregate manager sources: role metadata, env allowlist, optional domain, and managers table
 db_manager_emails = get_manager_emails_from_db()
@@ -666,52 +1203,152 @@ def process_tds_with_ai(uploaded_file):
             st.error(f"Could not extract text from file: {text_content}")
             return None
 
-# Top-level Navigation Buttons
-st.markdown("---")
-nav_cols = st.columns(4)
+# Enhanced Navigation Section
+st.markdown('<div style="margin: 2rem 0;">', unsafe_allow_html=True)
+st.markdown('''
+<div style="text-align: center; margin-bottom: 2rem;">
+    <h3 style="color: #4a5568; font-weight: 600; margin-bottom: 0.5rem;">🚀 Select Module</h3>
+    <p style="color: #718096; font-size: 0.9rem; margin: 0;">Choose a module to begin managing your data</p>
+</div>
+''', unsafe_allow_html=True)
+
 if "main_section" not in st.session_state:
     st.session_state["main_section"] = None
 
-with nav_cols[0]:
-    if st.button("Chemical Master Data", use_container_width=True):
-        st.session_state["main_section"] = "chemical"
-        st.rerun()
-with nav_cols[1]:
-    if st.button("Sourcing Master Data", use_container_width=True):
-        st.session_state["main_section"] = "sourcing"
-        st.rerun()
-with nav_cols[2]:
-    if st.button("LeanChem Product Master Data", use_container_width=True):
-        st.session_state["main_section"] = "leanchem"
-        st.rerun()
-with nav_cols[3]:
-    if st.button("Market Master Data", use_container_width=True):
-        st.session_state["main_section"] = "market"
-        st.rerun()
-st.markdown("---")
+# Navigation Cards with Icons and Descriptions
+# Get user access levels
+user_access = get_user_access_levels(user_email)
 
-# Prepare Sourcing sub-navigation when active
-if st.session_state.get("main_section") == "sourcing":
-    st.markdown("<h3>Sourcing Master Data</h3>", unsafe_allow_html=True)
-    sub_cols = st.columns(3)
+# Filter navigation items based on user access
+nav_items = [
+    {
+        "key": "chemical",
+        "title": "🧪 Chemical Master",
+        "subtitle": "Chemical Database",
+        "description": "Manage chemical properties, specifications & classifications",
+        "icon": "🧪",
+        "access": user_access["chemical"]
+    },
+    {
+        "key": "sourcing", 
+        "title": "📋 Sourcing Master",
+        "subtitle": "TDS Management",
+        "description": "Handle Technical Data Sheets & supplier information",
+        "icon": "📋",
+        "access": user_access["sourcing"]
+    },
+    {
+        "key": "leanchem",
+        "title": "🏢 LeanChem Products",
+        "subtitle": "Product Portfolio",
+        "description": "Manage Leanchems proprietary product catalog",
+        "icon": "🏢",
+        "access": user_access["leanchem"]
+    },
+    {
+        "key": "market",
+        "title": "📊 Market Data",
+        "subtitle": "Market Intelligence", 
+        "description": "Track market trends & competitive analysis",
+        "icon": "📊",
+        "access": user_access["market"]
+    }
+]
+
+# Filter out items user doesn't have access to
+accessible_nav_items = [item for item in nav_items if item["access"]]
+
+# Adjust column layout based on number of accessible items
+if len(accessible_nav_items) > 0:
+    nav_cols = st.columns(len(accessible_nav_items))
+    
+    for i, item in enumerate(accessible_nav_items):
+        with nav_cols[i]:
+            # Check if this section is active
+            is_active = st.session_state.get("main_section") == item["key"]
+            active_class = "active" if is_active else ""
+            
+            # Create clickable card
+            button_clicked = st.button(
+                f"""{item["icon"]} {item["title"].split(' ', 1)[1]}""",
+                key=f"nav_{item['key']}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary"
+            )
+            
+            # Add description below button
+            st.markdown(f'''
+            <div style="text-align: center; margin-top: 0.5rem; padding: 0 0.5rem;">
+                <small style="color: #718096; font-size: 0.8rem; line-height: 1.3;">
+                    {item["description"]}
+                </small>
+            </div>
+            ''', unsafe_allow_html=True)
+            
+            if button_clicked:
+                st.session_state["main_section"] = item["key"]
+                st.rerun()
+else:
+    st.warning("You don't have access to any modules. Please contact your administrator.")
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# Access control messages for restricted sections
+if st.session_state.get("main_section") == "chemical" and not has_chemical_master_access(user_email):
+    st.error("🚫 Access Denied: You don't have permission to access Chemical Master Data. This module is restricted to Daniel and Betty Abay.")
+    st.info("Please contact your administrator if you believe you should have access to this module.")
+    st.stop()
+
+if st.session_state.get("main_section") == "sourcing" and not has_sourcing_master_access(user_email):
+    st.error("🚫 Access Denied: You don't have permission to access Sourcing Master Data. This module is restricted to Iman, Meraf, Alhadi, and Betty Abay.")
+    st.info("Please contact your administrator if you believe you should have access to this module.")
+    st.stop()
+
+# Enhanced Sourcing sub-navigation when active
+if st.session_state.get("main_section") == "sourcing" and has_sourcing_master_access(user_email):
+    st.markdown('<div class="form-card" style="margin: 2rem 0;">', unsafe_allow_html=True)
+    st.markdown('''
+    <div style="text-align: center; margin-bottom: 1.5rem;">
+        <h3 style="color: #4a5568; font-weight: 600; margin-bottom: 0.5rem;">📋 Sourcing Master Data</h3>
+        <p style="color: #718096; font-size: 0.9rem; margin: 0;">Technical Data Sheet Management</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
     if "sourcing_section" not in st.session_state:
         st.session_state["sourcing_section"] = "add"
-    with sub_cols[0]:
-        if st.button("Add TDS", use_container_width=True):
-            st.session_state["sourcing_section"] = "add"
-            st.rerun()
-    with sub_cols[1]:
-        if st.button("Manage TDS", use_container_width=True):
-            st.session_state["sourcing_section"] = "manage"
-            st.rerun()
-    with sub_cols[2]:
-        if st.button("View TDS", use_container_width=True):
-            st.session_state["sourcing_section"] = "view"
-            st.rerun()
-    st.markdown("---")
+    
+    sub_cols = st.columns(3)
+    sub_nav_items = [
+        {"key": "add", "icon": "➕", "title": "Add TDS", "desc": "Upload new technical data sheets"},
+        {"key": "manage", "icon": "⚙️", "title": "Manage TDS", "desc": "Edit and organize existing TDS"},
+        {"key": "view", "icon": "👁️", "title": "View TDS", "desc": "Browse and search TDS library"}
+    ]
+    
+    for i, item in enumerate(sub_nav_items):
+        with sub_cols[i]:
+            is_active = st.session_state.get("sourcing_section") == item["key"]
+            
+            if st.button(
+                f"""{item["icon"]} {item["title"]}""",
+                key=f"sub_nav_{item['key']}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary"
+            ):
+                st.session_state["sourcing_section"] = item["key"]
+                st.rerun()
+            
+            st.markdown(f'''
+            <div style="text-align: center; margin-top: 0.5rem;">
+                <small style="color: #718096; font-size: 0.8rem;">
+                    {item["desc"]}
+                </small>
+            </div>
+            ''', unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # UI - Add Product
-if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "add":
+if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "add" and has_sourcing_master_access(user_email):
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">Add TDS / Sourcing</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
@@ -786,7 +1423,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         st.markdown("---")
         st.subheader("Product Status")
         is_leanchems_product = st.selectbox(
-            "Is it LeanChems legacy/existing/coming product?",
+            "Is it Leanchems legacy/existing/coming product?",
             ["Yes", "No"],
             index=0
         )
@@ -1258,7 +1895,7 @@ def build_version_entry(prod, updates):
     return history
 
 # UI - Manage Products
-if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "manage":
+if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "manage" and has_sourcing_master_access(user_email):
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">Manage TDS</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
@@ -1286,7 +1923,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             filter_product_type = st.selectbox("Filter by Product Type", ["All"] + all_product_types)
         with colf3:
             # LeanChems Product Filter
-            filter_leanchems = st.selectbox("LeanChems Chemicals", ["All", "Yes", "No"])
+            filter_leanchems = st.selectbox("Leanchems Chemicals", ["All", "Yes", "No"])
         with colf4:
             # TDS Filter
             filter_tds = st.selectbox("TDS Status", ["All", "With TDS", "Without TDS"])
@@ -1347,7 +1984,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                 # Show LeanChems status
                                 leanchems_status = prod.get("is_leanchems_product", "No")
                                 if leanchems_status == "Yes":
-                                    st.caption("🏢 LeanChems Product")
+                                    st.caption("🏢 Leanchems Product")
                             with cols[1]:
                                 st.write("TDS: "+ ("✅" if prod.get("tds_file_url") else "❌"))
                             with cols[2]:
@@ -1368,7 +2005,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                     
                                     # LeanChems Product Status
                                     eleanchems = st.selectbox(
-                                        "Is it LeanChems legacy/existing/coming product?",
+                                        "Is it Leanchems legacy/existing/coming product?",
                                         ["Yes", "No"],
                                         index=0 if prod.get("is_leanchems_product") == "Yes" else 1,
                                         key=f"leanchems_{pid}"
@@ -1491,7 +2128,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
     st.markdown('</div>', unsafe_allow_html=True)
 
 # UI - View Products
-if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "view":
+if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "view" and has_sourcing_master_access(user_email):
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">View TDS</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
@@ -1586,7 +2223,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                             # Show LeanChems status
                             leanchems_status = prod.get("is_leanchems_product", "No")
                             if leanchems_status == "Yes":
-                                st.caption("🏢 LeanChems Product")
+                                st.caption("🏢 Leanchems Product")
                         
                         with col2:
                             # TDS status and download
@@ -1664,7 +2301,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
 # ==========================
 # UI - Chemical Master Data
 # ==========================
-if st.session_state.get("main_section") == "chemical":
+if st.session_state.get("main_section") == "chemical" and has_chemical_master_access(user_email):
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">Chemical Master Data</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
