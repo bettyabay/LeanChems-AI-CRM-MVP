@@ -1033,12 +1033,59 @@ def get_distinct_product_types() -> list[str]:
     except Exception:
         return []
 
+def get_distinct_industry_segments() -> list[str]:
+    """Distinct industry segments from Chemical Master Data."""
+    try:
+        res = supabase.table("chemical_types").select("industry_segments").execute()
+        rows = res.data or []
+        values: set[str] = set()
+        for row in rows:
+            segs = row.get("industry_segments") or []
+            try:
+                for s in segs:
+                    s_str = str(s).strip()
+                    if s_str:
+                        values.add(s_str)
+            except Exception:
+                continue
+        return sorted(values)
+    except Exception:
+        return []
+
+def get_functional_categories_for_segment(segment: str) -> list[str]:
+    """Distinct functional categories for chemicals that belong to a segment."""
+    try:
+        if not segment:
+            return []
+        wanted = segment.strip().lower()
+        res = supabase.table("chemical_types").select("industry_segments,functional_categories").execute()
+        rows = res.data or []
+        fc: set[str] = set()
+        for row in rows:
+            segs = [str(s).strip().lower() for s in (row.get("industry_segments") or []) if str(s).strip()]
+            if any(wanted == s or wanted in s for s in segs):
+                for c in (row.get("functional_categories") or []):
+                    c_str = str(c).strip()
+                    if c_str:
+                        fc.add(c_str)
+        return sorted(fc)
+    except Exception:
+        return []
+
+def fetch_chemical_types_for_category(category: str) -> list[str]:
+    """Deprecated in favor of mapping-based lookup. Kept for compatibility."""
+    try:
+        return get_types_for_category(category)
+    except Exception:
+        return []
+
 def get_types_for_category(category: str) -> list[str]:
     """Return product types for a category.
 
     Priority:
-    1) Excel-driven mapping if available (case-insensitive category match)
-    2) In-code mapping fallback
+    1) Chemical Master Data (by industry segment contains category)
+    2) Excel-driven mapping if available (case-insensitive category match)
+    3) In-code mapping fallback
     """
     if not category:
         return []
@@ -2315,6 +2362,38 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
         else:
             st.caption("Type a chemical name and press Enter to check duplicates. AI analysis is not available.")
 
+        # Mapping selects at the top (before Type Chemical Name)
+        st.markdown("---")
+        st.caption("Select Category and Product Type from mapping")
+        selected_segment = st.selectbox(
+            "Category",
+            options=FIXED_CATEGORIES,
+            key="chem_seg_select"
+        )
+        add_new_seg = st.checkbox("Add new category", key="chem_add_new_seg")
+        if add_new_seg:
+            new_seg = st.text_input("New Category Name", key="chem_new_seg")
+            if new_seg:
+                selected_segment = new_seg.strip()
+
+        type_options = get_types_for_category(selected_segment)
+        selected_type = st.selectbox(
+            "Product Type",
+            options=type_options or [""],
+            key="chem_type_select"
+        )
+        add_new_type = st.checkbox("Add new type", key="chem_add_new_type")
+        if add_new_type:
+            new_type = st.text_input("New Type Name", key="chem_new_type")
+            if new_type:
+                selected_type = new_type.strip()
+
+        # Persist selections for save logic
+        st.session_state["chem_inds"] = selected_segment
+        st.session_state["chem_func"] = selected_type
+        st.write(f"Selected Category: {selected_segment or '-'}")
+        st.write(f"Selected Product Type: {selected_type or '-'}")
+
         with st.form("chem_add_form", clear_on_submit=False):
             chem_name_input = st.text_input("Type Chemical Name:", placeholder="e.g., Redispersible Polymer Powder")
             if gemini_model:
@@ -2421,8 +2500,10 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
             chem_family = st.text_input("Family", value=extracted.get("family", ""), key="chem_family")
             chem_syn = st.text_input("Synonyms (comma-separated)", value=csv_default(extracted.get("synonyms", [])), key="chem_syn")
             chem_cas = st.text_input("CAS IDs (comma-separated)", value=csv_default(extracted.get("cas_ids", [])), key="chem_cas")
-            chem_func = st.text_input("Functional Categories (comma-separated)", value=csv_default(extracted.get("functional_categories", [])), key="chem_func")
-            chem_inds = st.text_input("Industry Segments (comma-separated)", value=csv_default(extracted.get("industry_segments", [])), key="chem_inds")
+            # Keep manual override fields for power users (hidden behind expander)
+            with st.expander("Advanced: edit as comma-separated values", expanded=False):
+                chem_func = st.text_input("Functional Categories (comma-separated)", value=csv_default(extracted.get("functional_categories", [])), key="chem_func_manual")
+                chem_inds = st.text_input("Industry Segments (comma-separated)", value=csv_default(extracted.get("industry_segments", [])), key="chem_inds_manual")
             chem_keys = st.text_input("Key Applications (comma-separated)", value=csv_default(extracted.get("key_applications", [])), key="chem_keys")
         with colc2:
             chem_hs_json = st.text_area("HS Codes (one JSON object per line: {region,code})", value=_ai_list_as_lines(extracted.get("hs_codes")) if extracted else "", height=80, key="chem_hs_json")

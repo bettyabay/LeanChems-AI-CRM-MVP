@@ -4,3 +4,5 @@ venv/
 documents/
 
 .env
+.venv312/
+.venv312
