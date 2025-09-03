@@ -164,120 +164,16 @@ st.markdown("""
                 /* Removed global width constraints */
             }
             
-            /* Target the input containers specifically within login form */
-            .login-container .stTextInput > div {
-                max-width: 80px !important;
-                width: 80px !important;
-            }
-            
-            .login-container .stTextInput > div > div {
-                max-width: 80px !important;
-                width: 80px !important;
-            }
-            
-            /* Target the actual input element within the login form */
-            .login-container .stTextInput > div > div > input {
-                max-width: 80px !important;
-                width: 80px !important;
-                min-width: 80px !important;
-                flex-basis: 80px !important;
-            }
-            
-            /* Target the Streamlit form container within login */
-            .login-container form {
-                max-width: 80px !important;
-                width: 80px !important;
-            }
-            
-            /* Target all form elements within login container */
+            /* Responsive login form inputs */
+            .login-container [data-testid="stTextInput"],
+            .login-container [data-testid="stTextInput"] > div,
+            .login-container [data-testid="stTextInput"] > div > div,
+            .login-container [data-testid="stTextInput"] > div > div > input,
+            .login-container form,
             .login-container form > div {
-                max-width: 80px !important;
-                width: 80px !important;
-            }
-            
-            /* Override any Streamlit default styling */
-            .login-container .stTextInput {
-                max-width: 80px !important;
-                width: 80px !important;
-                min-width: 80px !important;
-            }
-            
-            /* Force all input-related elements to be narrow */
-            .login-container input[type="text"],
-            .login-container input[type="password"],
-            .login-container input[type="email"] {
-                max-width: 80px !important;
-                width: 80px !important;
-                min-width: 80px !important;
-                box-sizing: border-box !important;
-            }
-            
-            /* Additional aggressive targeting for Streamlit components */
-            .login-container [data-testid="stTextInput"] {
-                max-width: 80px !important;
-                width: 80px !important;
-                min-width: 80px !important;
-            }
-            
-            .login-container [data-testid="stTextInput"] > div {
-                max-width: 80px !important;
-                width: 80px !important;
-                min-width: 80px !important;
-            }
-            
-            .login-container [data-testid="stTextInput"] > div > div {
-                max-width: 80px !important;
-                width: 80px !important;
-                min-width: 80px !important;
-            }
-            
-            .login-container [data-testid="stTextInput"] > div > div > input {
-                max-width: 80px !important;
-                width: 80px !important;
-                min-width: 80px !important;
-                flex-basis: 80px !important;
-            }
-            
-            /* Debug styling - add a border to see the actual input area */
-            .login-container .stTextInput {
-                border: 2px solid red !important;
-            }
-            
-            .login-container .stTextInput > div {
-                border: 2px solid blue !important;
-            }
-            
-            .login-container .stTextInput > div > div {
-                border: 2px solid green !important;
-            }
-            
-            .login-container .stTextInput > div > div > input {
-                border: 2px solid orange !important;
-            }
-            
-            /* Override Streamlit's default form styling */
-            .login-container .stForm {
-                max-width: 80px !important;
-                width: 80px !important;
-            }
-            
-            /* Target Streamlit's internal form elements */
-            .login-container [data-testid="stForm"] {
-                max-width: 80px !important;
-                width: 80px !important;
-            }
-            
-            /* Override any flex properties */
-            .login-container .stTextInput > div {
-                flex: none !important;
-                flex-shrink: 1 !important;
-                flex-grow: 0 !important;
-            }
-            
-            /* Force all Streamlit elements to respect our width */
-            .login-container * {
-                max-width: 80px !important;
-                box-sizing: border-box !important;
+                max-width: 100% !important;
+                width: 100% !important;
+                min-width: 0 !important;
             }
 
 .stTextInput > div > div > input:focus,
@@ -640,13 +536,13 @@ def _render_login_screen():
     # Full width login container with logo and title aligned
     st.markdown("""
     <div class="wide-login-container fade-in-up">
-        <div style="display: flex; align-items: center; gap: 2rem; margin-bottom: 2rem; background: rgba(255, 255, 255, 0.95); padding: 1.5rem; border-radius: 15px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);">
+        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem; background: rgba(255, 255, 255, 0.95); padding: 1.5rem; border-radius: 15px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);">
             <div style="flex-shrink: 0;">
-                <img src="data:image/png;base64,{}" style="width: 80px; height: auto; display: block;" alt="LeanChems Logo">
+                <img src="data:image/png;base64,{}" style="width: clamp(80px, 40vw, 160px); height: auto; display: block; object-fit: contain;" alt="LeanChems Logo">
             </div>
-            <div style="flex-grow: 1;">
-                <h1 style="margin-bottom: 0.5rem; background: linear-gradient(145deg, #93c5fd, #60a5fa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-size: 2.2rem;">Leanchems</h1>
-                <h2 style="margin: 0; color: #1e40af; font-size: 1.8rem; font-weight: 600;">Product Management System</h2>
+            <div style="flex: 1 1 240px; min-width: 0;">
+                <h1 style="margin-bottom: 0.5rem; background: linear-gradient(145deg, #93c5fd, #60a5fa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-size: clamp(1.4rem, 5vw, 2.4rem);">Leanchems</h1>
+                <h2 style="margin: 0; color: #1e40af; font-size: clamp(1rem, 3.5vw, 1.8rem); font-weight: 600;">Product Management System</h2>
             </div>
         </div>
         <p style="color: #718096; margin-top: 1rem; font-size: 1.1rem; text-align: center;">Sign in to access your dashboard</p>
@@ -655,7 +551,6 @@ def _render_login_screen():
     
     # Login form - always visible
     with st.form("login_form_full", clear_on_submit=False):
-        st.markdown('<div class="login-container">', unsafe_allow_html=True)
         email = st.text_input("📧 Email Address", placeholder="you@example.com", help="Enter your registered email address")
         password = st.text_input("🔐 Password", type="password", placeholder="Enter your password", help="Enter your account password")
         
@@ -967,6 +862,74 @@ MAX_FILE_MB = 10
 
 # Excel-driven category/type mapping
 CATEGORY_EXCEL_PATH = os.getenv("CATEGORY_EXCEL_PATH", "assets/19 Chemicals - Tax Assessment.xlsx")
+
+# ==========================
+# Chemical View Configuration
+# ==========================
+# Define which fields show in the compact table and detail view for Chemical Master > View
+CHEM_VIEW_TABLE_FIELDS: list[tuple[str, str]] = [
+    ("generic_name", "Generic Name"),
+    ("industry_segments", "Industry Segments"),
+    ("functional_categories", "Functional Categories"),
+    ("key_applications", "Key Applications"),
+    ("family", "Family"),
+    ("shelf_life_months", "Shelf Life (months)"),
+    ("data_completeness", "Data Completeness"),
+]
+
+CHEM_VIEW_DETAIL_FIELDS: list[tuple[str, str]] = [
+    ("generic_name", "Generic Name"),
+    ("family", "Family"),
+    ("synonyms", "Synonyms"),
+    ("cas_ids", "CAS IDs"),
+    ("industry_segments", "Industry Segments"),
+    ("functional_categories", "Functional Categories"),
+    ("key_applications", "Key Applications"),
+    ("appearance", "Appearance"),
+    ("typical_dosage", "Typical Dosage"),
+    ("physical_snapshot", "Physical Snapshot"),
+    ("compatibilities", "Compatibilities"),
+    ("incompatibilities", "Incompatibilities"),
+    ("sensitivities", "Sensitivities"),
+    ("shelf_life_months", "Shelf Life (months)"),
+    ("storage_conditions", "Storage Conditions"),
+    ("packaging_options", "Packaging Options"),
+    ("summary_80_20", "Summary 80/20"),
+    ("summary_technical", "Summary Technical"),
+    ("data_completeness", "Data Completeness"),
+]
+
+def _format_chem_field(value):
+    try:
+        if value is None:
+            return "-"
+        if isinstance(value, list):
+            # Pretty-print list of simple values or dicts
+            if not value:
+                return "-"
+            if all(not isinstance(v, (dict, list)) for v in value):
+                return ", ".join(str(v) for v in value if str(v).strip()) or "-"
+            # Fallback to JSON for complex lists
+            import json as _json_v
+            return _json_v.dumps(value, ensure_ascii=False)
+        if isinstance(value, (dict,)):
+            import json as _json_v
+            return _json_v.dumps(value, ensure_ascii=False)
+        return str(value)
+    except Exception:
+        try:
+            return str(value)
+        except Exception:
+            return "-"
+
+def _build_chem_view_rows(records: list[dict], fields: list[tuple[str, str]]) -> list[dict]:
+    rows: list[dict] = []
+    for rec in records:
+        row = {}
+        for key, label in fields:
+            row[label] = _format_chem_field(rec.get(key))
+        rows.append(row)
+    return rows
 
 @st.cache_data
 def get_category_type_mapping() -> dict:
@@ -2493,38 +2456,57 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
             except Exception:
                 return _ai_view(value)
 
-        # Prefilled editable fields (no extra AI captions)
-        colc1, colc2 = st.columns(2)
-        with colc1:
-            chem_gen = st.text_input("Generic Name", value=extracted.get("generic_name", ""), key="chem_generic")
-            chem_family = st.text_input("Family", value=extracted.get("family", ""), key="chem_family")
-            chem_syn = st.text_input("Synonyms (comma-separated)", value=csv_default(extracted.get("synonyms", [])), key="chem_syn")
-            chem_cas = st.text_input("CAS IDs (comma-separated)", value=csv_default(extracted.get("cas_ids", [])), key="chem_cas")
-            # Keep manual override fields for power users (hidden behind expander)
-            with st.expander("Advanced: edit as comma-separated values", expanded=False):
-                chem_func = st.text_input("Functional Categories (comma-separated)", value=csv_default(extracted.get("functional_categories", [])), key="chem_func_manual")
-                chem_inds = st.text_input("Industry Segments (comma-separated)", value=csv_default(extracted.get("industry_segments", [])), key="chem_inds_manual")
-            chem_keys = st.text_input("Key Applications (comma-separated)", value=csv_default(extracted.get("key_applications", [])), key="chem_keys")
-        with colc2:
-            chem_hs_json = st.text_area("HS Codes (one JSON object per line: {region,code})", value=_ai_list_as_lines(extracted.get("hs_codes")) if extracted else "", height=80, key="chem_hs_json")
-            # Place Summary 80/20 immediately after Generic Name (left) and HS Codes (right)
-            chem_sum_8020 = st.text_area("Summary 80/20 (5–7 bullets)", value=extracted.get("summary_80_20", ""), height=80, key="chem_8020")
-            chem_dosage_json = st.text_area("Typical Dosage (one JSON object per line: {application,range})", value=_ai_list_as_lines(extracted.get("typical_dosage")) if extracted else "", height=80, key="chem_dosage_json")
-            chem_phys_json = st.text_area("Physical Snapshot (one JSON object per line: {name,value,unit,method})", value=_ai_list_as_lines(extracted.get("physical_snapshot")) if extracted else "", height=80, key="chem_phys_json")
-            chem_compat = st.text_input("Compatibilities (comma-separated)", value=csv_default(extracted.get("compatibilities", [])), key="chem_compat")
-            chem_incompat = st.text_input("Incompatibilities (comma-separated)", value=csv_default(extracted.get("incompatibilities", [])), key="chem_incompat")
-            chem_sens = st.text_input("Sensitivities (comma-separated)", value=csv_default(extracted.get("sensitivities", [])), key="chem_sens")
-
-        # Summary 80/20 moved above (after HS Codes)
-        colc3, colc4 = st.columns(2)
-        with colc3:
-            chem_appearance = st.text_input("Appearance", value=extracted.get("appearance", ""), key="chem_appearance")
-            chem_storage = st.text_input("Storage Conditions", value=extracted.get("storage_conditions", ""), key="chem_storage")
-            chem_pack = st.text_input("Packaging Options (comma-separated)", value=csv_default(extracted.get("packaging_options", [])), key="chem_pack")
-        with colc4:
-            chem_shelf = st.number_input("Shelf Life (months)", min_value=0, max_value=120, value=int(extracted.get("shelf_life_months", 0) if extracted else 0), step=1, key="chem_shelf")
-            chem_dc = st.slider("Data Completeness", min_value=0.0, max_value=1.0, value=float(extracted.get("data_completeness", 0.0) if extracted else 0.0), step=0.05, key="chem_dc")
+        # Prefilled editable fields (reordered to requested sequence)
+        # 1) Summary 80/20
+        chem_sum_8020 = st.text_area("Summary 80/20 (5–7 bullets)", value=extracted.get("summary_80_20", ""), height=80, key="chem_8020")
+        # 2) Synonyms
+        chem_syn = st.text_input("Synonyms (comma-separated)", value=csv_default(extracted.get("synonyms", [])), key="chem_syn")
+        # 3) Family
+        chem_family = st.text_input("Family", value=extracted.get("family", ""), key="chem_family")
+        # 4) Generic Name
+        chem_gen = st.text_input("Generic Name", value=extracted.get("generic_name", ""), key="chem_generic")
+        # 5) HS Codes (code only)
+        def _hs_codes_as_csv():
+            try:
+                items = extracted.get("hs_codes") if extracted else []
+                codes = []
+                for it in items or []:
+                    if isinstance(it, dict) and it.get("code"):
+                        codes.append(str(it.get("code")))
+                return ", ".join(codes)
+            except Exception:
+                return ""
+        chem_hs_codes = st.text_input("HS Codes", value=_hs_codes_as_csv(), key="chem_hs_codes")
+        # 6) CAS IDs
+        chem_cas = st.text_input("CAS IDs", value=csv_default(extracted.get("cas_ids", [])), key="chem_cas")
+        # 7) Summary Technical
         chem_sum_tech = st.text_area("Summary Technical", value=extracted.get("summary_technical", ""), height=100, key="chem_sumtech")
+        # 8) Functional Categories
+        chem_func = st.text_input("Functional Categories", value=csv_default(extracted.get("functional_categories", [])), key="chem_func")
+        # 9) Industry Segments
+        chem_inds = st.text_input("Industry Segments", value=csv_default(extracted.get("industry_segments", [])), key="chem_inds")
+        # 10) Key Applications
+        chem_keys = st.text_input("Key Applications", value=csv_default(extracted.get("key_applications", [])), key="chem_keys")
+        # 11) Typical Dosage
+        chem_dosage_json = st.text_area("Typical Dosage", value=_ai_list_as_lines(extracted.get("typical_dosage")) if extracted else "", height=80, key="chem_dosage_json")
+        # 12) Physical Snapshot
+        chem_phys_json = st.text_area("Physical Snapshot", value=_ai_list_as_lines(extracted.get("physical_snapshot")) if extracted else "", height=80, key="chem_phys_json")
+        # 13) Compatibilities
+        chem_compat = st.text_input("Compatibilities", value=csv_default(extracted.get("compatibilities", [])), key="chem_compat")
+        # 14) Incompatibilities
+        chem_incompat = st.text_input("Incompatibilities", value=csv_default(extracted.get("incompatibilities", [])), key="chem_incompat")
+        # 15) Sensitivities
+        chem_sens = st.text_input("Sensitivities", value=csv_default(extracted.get("sensitivities", [])), key="chem_sens")
+        # 16) Appearance
+        chem_appearance = st.text_input("Appearance", value=extracted.get("appearance", ""), key="chem_appearance")
+        # 17) Storage Conditions
+        chem_storage = st.text_input("Storage Conditions", value=extracted.get("storage_conditions", ""), key="chem_storage")
+        # 18) Packaging Options
+        chem_pack = st.text_input("Packaging Options", value=csv_default(extracted.get("packaging_options", [])), key="chem_pack")
+        # 19) Shelf Life (months)
+        chem_shelf = st.number_input("Shelf Life (months)", min_value=0, max_value=120, value=int(extracted.get("shelf_life_months", 0) if extracted else 0), step=1, key="chem_shelf")
+        # 20) Data Completeness
+        chem_dc = st.slider("Data Completeness", min_value=0.0, max_value=1.0, value=float(extracted.get("data_completeness", 0.0) if extracted else 0.0), step=0.05, key="chem_dc")
 
         # Show one-line source indicator
         if extracted:
@@ -2568,7 +2550,14 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                         "family": prefer_manual_str(st.session_state.get("chem_family"), "family"),
                         "synonyms": prefer_manual_csv(st.session_state.get("chem_syn"), "synonyms"),
                         "cas_ids": prefer_manual_csv(st.session_state.get("chem_cas"), "cas_ids"),
-                        "hs_codes": prefer_manual_jsonarr(st.session_state.get("chem_hs_json"), "hs_codes"),
+                        "hs_codes": (
+                            [
+                                {"region": "WCO", "code": code}
+                                for code in parse_csv_list(st.session_state.get("chem_hs_codes"))
+                            ]
+                            or ai.get("hs_codes")
+                            or []
+                        ),
                         "functional_categories": prefer_manual_csv(st.session_state.get("chem_func"), "functional_categories"),
                         "industry_segments": prefer_manual_csv(st.session_state.get("chem_inds"), "industry_segments"),
                         "key_applications": prefer_manual_csv(st.session_state.get("chem_keys"), "key_applications"),
@@ -2751,23 +2740,29 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                     continue
             v_filtered.append(c)
 
+        # Compact table view from mapping
+        if v_filtered:
+            try:
+                import pandas as _pd_view
+            except Exception:
+                _pd_view = None
+            rows = _build_chem_view_rows(v_filtered, CHEM_VIEW_TABLE_FIELDS)
+            if rows:
+                try:
+                    import pandas as pd
+                    dfv = pd.DataFrame(rows)
+                    st.dataframe(dfv, use_container_width=True, hide_index=True)
+                except Exception:
+                    # Fallback simple list rendering
+                    for r in rows:
+                        st.write(r)
+
         # Export CSV
         if st.button("📊 Export CSV", type="secondary", key="export_csv_view_chemicals"):
             try:
                 import pandas as pd
-                rows = []
-                for c in v_filtered:
-                    rows.append({
-                        "Generic Name": c.get("generic_name"),
-                        "Family": c.get("family"),
-                        "Functional Categories": ", ".join(c.get("functional_categories") or []),
-                        "Industry Segments": ", ".join(c.get("industry_segments") or []),
-                        "Key Applications": ", ".join(c.get("key_applications") or []),
-                        "HS Codes": __import__("json").dumps(c.get("hs_codes") or []),
-                        "Shelf Life (months)": c.get("shelf_life_months"),
-                        "Data Completeness": c.get("data_completeness"),
-                    })
-                df = pd.DataFrame(rows)
+                rows_csv = _build_chem_view_rows(v_filtered, CHEM_VIEW_TABLE_FIELDS)
+                df = pd.DataFrame(rows_csv)
                 csv = df.to_csv(index=False)
                 st.download_button(
                     label="💾 Download CSV",
@@ -2782,25 +2777,10 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
             st.info("No chemicals found with current filters.")
         else:
             for c in v_filtered:
-                with st.expander(f"🧪 {c.get('generic_name')} — {', '.join(c.get('industry_segments') or [])}"):
-                    st.write(f"Family: {c.get('family') or '-'}")
-                    st.write(f"Functional Categories: {', '.join(c.get('functional_categories') or []) or '-'}")
-                    st.write(f"Industry Segments: {', '.join(c.get('industry_segments') or []) or '-'}")
-                    st.write(f"Key Applications: {', '.join(c.get('key_applications') or []) or '-'}")
-                    st.write(f"Appearance: {c.get('appearance') or '-'}")
-                    st.write(f"Shelf Life (months): {c.get('shelf_life_months') or 0}")
-                    st.write(f"Storage: {c.get('storage_conditions') or '-'}")
-                    st.write(f"Packaging Options: {', '.join(c.get('packaging_options') or []) or '-'}")
-                    st.write(f"Data Completeness: {c.get('data_completeness') or 0.0}")
-                    hs_codes = c.get('hs_codes') or []
-                    if hs_codes:
-                        st.caption(f"HS Codes: {__import__('json').dumps(hs_codes)}")
-                    phys = c.get('physical_snapshot') or []
-                    if phys:
-                        st.caption(f"Physical Snapshot: {__import__('json').dumps(phys)}")
-                    dosage = c.get('typical_dosage') or []
-                    if dosage:
-                        st.caption(f"Typical Dosage: {__import__('json').dumps(dosage)}")
+                title_suffix = ", ".join(c.get('industry_segments') or [])
+                with st.expander(f"🧪 {c.get('generic_name')} — {title_suffix}"):
+                    for key, label in CHEM_VIEW_DETAIL_FIELDS:
+                        st.write(f"{label}: {_format_chem_field(c.get(key))}")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
