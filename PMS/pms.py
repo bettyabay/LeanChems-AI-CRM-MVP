@@ -427,6 +427,14 @@ h2 {
     .hint {
         color: #cccccc;
     }
+    /* Force readable text in dark mode (global) */
+    .stApp, .stApp * { color: #e5e7eb !important; }
+    .stApp a, .stApp a * { color: #93c5fd !important; }
+    /* Alerts/notifications */
+    .stAlert, [role="alert"], .stInfo, .stSuccess, .stWarning, .stError,
+    .stAlert *, [role="alert"] *, .stInfo *, .stSuccess *, .stWarning *, .stError * {
+        color: #ffffff !important;
+    }
 }
 
 .wide-login-container {
@@ -665,9 +673,7 @@ col_title, col_user = st.columns([3, 1])
 with col_title:
     st.markdown('''
     <div style="text-align: center;">
-        <h1 style="margin-bottom: 0.5rem; background: linear-gradient(145deg, #93c5fd, #60a5fa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-size: 1.9rem;">
-            Leanchems Product Management System
-        </h1>
+        <h1 style="margin-bottom: 0.5rem; background: linear-gradient(145deg, #93c5fd, #60a5fa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-size: 1.9rem;">Leanchems Product Management System</h1>
         <p style="color: #718096; margin: 0; font-size: 1rem;">Comprehensive Chemical & Product Data Management</p>
     </div>
     ''', unsafe_allow_html=True)
@@ -692,7 +698,7 @@ with col_user:
     </div>
     ''', unsafe_allow_html=True)
     
-    if st.button("🚪 Sign Out", type="secondary", use_container_width=True):
+    if st.button("Sign Out", type="secondary", use_container_width=True):
         try:
             supabase.auth.sign_out()
         except Exception:
@@ -775,7 +781,7 @@ if user_email:
     if user_access["leanchem"]:
         access_info.append("LeanChem Products")
     if user_access["market"]:
-        access_info.append("Market Data")
+        access_info.append("Market Master Data")
     
     if access_info:
         st.info(f"🔐 **Access Granted:** You have access to: {', '.join(access_info)}")
@@ -1217,7 +1223,7 @@ def process_tds_with_ai(uploaded_file):
 st.markdown('<div style="margin: 2rem 0;">', unsafe_allow_html=True)
 st.markdown('''
 <div style="text-align: center; margin-bottom: 2rem;">
-    <h3 style="color: #4a5568; font-weight: 600; margin-bottom: 0.5rem;">🚀 Select Module</h3>
+    <h3 style="color: #4a5568; font-weight: 600; margin-bottom: 0.5rem;"> Select Module</h3>
     <p style="color: #718096; font-size: 0.9rem; margin: 0;">Choose a module to begin managing your data</p>
 </div>
 ''', unsafe_allow_html=True)
@@ -1233,7 +1239,7 @@ user_access = get_user_access_levels(user_email)
 nav_items = [
     {
         "key": "chemical",
-        "title": "🧪 Chemical Master",
+        "title": "🧪 Chemical Master Data",
         "subtitle": "Chemical Database",
         "description": "Manage chemical properties, specifications & classifications",
         "icon": "🧪",
@@ -1241,7 +1247,7 @@ nav_items = [
     },
     {
         "key": "sourcing", 
-        "title": "📋 Sourcing Master",
+        "title": "📋 Sourcing Master Data",
         "subtitle": "TDS Management",
         "description": "Handle Technical Data Sheets & supplier information",
         "icon": "📋",
@@ -1257,7 +1263,7 @@ nav_items = [
     },
     {
         "key": "market",
-        "title": "📊 Market Data",
+        "title": "📊 Market Master Data",
         "subtitle": "Market Intelligence", 
         "description": "Track market trends & competitive analysis",
         "icon": "📊",
@@ -1666,6 +1672,7 @@ def analyze_chemical_with_ai(chemical_name: str) -> dict | None:
         # Helper to normalize output to our 20-field schema
         def _normalize(data: dict) -> dict:
             import re as _re_norm
+            from typing import Any, List, Dict
             def parse_int_safe(value) -> int:
                 if value is None:
                     return 0
@@ -1711,18 +1718,70 @@ def analyze_chemical_with_ai(chemical_name: str) -> dict | None:
                 if isinstance(value, str):
                     return [s.strip() for s in value.split(",") if s.strip()]
                 return []
+            def ensure_list_of_dicts(value: Any) -> List[Dict]:
+                if value is None:
+                    return []
+                if isinstance(value, list):
+                    return [v for v in value if isinstance(v, dict)]
+                if isinstance(value, dict):
+                    return [value]
+                if isinstance(value, str):
+                    # Try lenient JSON parse
+                    parsed = _parse_lenient_json(value)
+                    if isinstance(parsed, list):
+                        return [v for v in parsed if isinstance(v, dict)]
+                    if isinstance(parsed, dict):
+                        return [parsed]
+                    # Try simple "k: v, k: v" parser for one line
+                    entry: Dict[str, Any] = {}
+                    for pair in [p for p in value.split(",") if ":" in p]:
+                        k, v = pair.split(":", 1)
+                        k = k.strip()
+                        v = v.strip()
+                        if k:
+                            entry[k] = v
+                    return [entry] if entry else []
+                return []
+            def normalize_hs_codes(value: Any) -> List[Dict]:
+                # Accept list of dicts, single dict, list of strings, or single string
+                lst = ensure_list_of_dicts(value)
+                if lst:
+                    return lst
+                if isinstance(value, list):
+                    items = []
+                    for v in value:
+                        s = str(v).strip()
+                        if s:
+                            items.append({"region": "WCO", "code": s})
+                    return items
+                if isinstance(value, str):
+                    s = value.strip()
+                    return ([{"region": "WCO", "code": s}] if s else [])
+                return []
+            def get_first(data_obj: Dict, candidates: List[str]):
+                # Case/space/underscore-insensitive get
+                norm_map = {str(k).replace(" ", "").replace("_", "").lower(): k for k in data_obj.keys()}
+                for c in candidates:
+                    key = norm_map.get(str(c).replace(" ", "").replace("_", "").lower())
+                    if key is not None:
+                        return data_obj.get(key)
+                return None
             normalized = {
                 "generic_name": (data.get("generic_name") or name).strip(),
                 "family": (data.get("family") or "").strip(),
                 "synonyms": ensure_list(data.get("synonyms")),
                 "cas_ids": ensure_list(data.get("cas_ids")),
-                "hs_codes": data.get("hs_codes") if isinstance(data.get("hs_codes"), list) else [],
+                "hs_codes": normalize_hs_codes(data.get("hs_codes")),
                 "functional_categories": ensure_list(data.get("functional_categories")),
                 "industry_segments": ensure_list(data.get("industry_segments")),
                 "key_applications": ensure_list(data.get("key_applications")),
-                "typical_dosage": data.get("typical_dosage") if isinstance(data.get("typical_dosage"), list) else [],
+                "typical_dosage": ensure_list_of_dicts(
+                    get_first(data, ["typical_dosage", "typical dosage", "dosage", "usage_range", "usage"]) or data.get("typical_dosage")
+                ),
                 "appearance": (data.get("appearance") or "").strip(),
-                "physical_snapshot": data.get("physical_snapshot") if isinstance(data.get("physical_snapshot"), list) else [],
+                "physical_snapshot": ensure_list_of_dicts(
+                    get_first(data, ["physical_snapshot", "physical properties", "physical_properties", "properties", "key_properties"]) or data.get("physical_snapshot")
+                ),
                 "compatibilities": ensure_list(data.get("compatibilities")),
                 "incompatibilities": ensure_list(data.get("incompatibilities")),
                 "sensitivities": ensure_list(data.get("sensitivities")),
@@ -2339,23 +2398,9 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
             if new_seg:
                 selected_segment = new_seg.strip()
 
-        type_options = get_types_for_category(selected_segment)
-        selected_type = st.selectbox(
-            "Product Type",
-            options=type_options or [""],
-            key="chem_type_select"
-        )
-        add_new_type = st.checkbox("Add new type", key="chem_add_new_type")
-        if add_new_type:
-            new_type = st.text_input("New Type Name", key="chem_new_type")
-            if new_type:
-                selected_type = new_type.strip()
-
-        # Persist selections for save logic
-        st.session_state["chem_inds"] = selected_segment
-        st.session_state["chem_func"] = selected_type
+        # Persist selections for save logic (no direct widget key to avoid conflicts)
+        st.session_state["chem_selected_category"] = selected_segment
         st.write(f"Selected Category: {selected_segment or '-'}")
-        st.write(f"Selected Product Type: {selected_type or '-'}")
 
         with st.form("chem_add_form", clear_on_submit=False):
             chem_name_input = st.text_input("Type Chemical Name:", placeholder="e.g., Redispersible Polymer Powder")
@@ -2451,10 +2496,48 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
         def _ai_list_as_lines(value):
             try:
                 if isinstance(value, list):
-                    return "\n".join(_json_for_ai_view.dumps(v, ensure_ascii=False) for v in value)
+                    # Render list of dicts as human-readable key: value pairs per line
+                    rendered_lines = []
+                    for item in value:
+                        if isinstance(item, dict):
+                            parts = []
+                            for k, v in item.items():
+                                if v is None:
+                                    continue
+                                parts.append(f"{k}: {v}")
+                            rendered_lines.append(", ".join(parts) if parts else _json_for_ai_view.dumps(item, ensure_ascii=False)
+                            )
+                        else:
+                            rendered_lines.append(str(item))
+                    return "\n".join(rendered_lines)
                 return _ai_view(value)
             except Exception:
                 return _ai_view(value)
+
+        # Parse relaxed human-readable "key: value, key: value" lines into list of dicts
+        def _parse_kv_lines(text_val: str):
+            items = []
+            try:
+                txt = (text_val or "").strip()
+                if not txt:
+                    return []
+                for line in txt.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entry = {}
+                    for pair in [p for p in line.split(",") if p.strip()]:
+                        if ":" in pair:
+                            k, v = pair.split(":", 1)
+                            k = k.strip()
+                            v = v.strip()
+                            if k:
+                                entry[k] = v
+                    if entry:
+                        items.append(entry)
+                return items
+            except Exception:
+                return items
 
         # Prefilled editable fields (reordered to requested sequence)
         # 1) Summary 80/20
@@ -2513,9 +2596,6 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
             src = st.session_state.get("chem_ai_source")
             if src:
                 st.caption(f"Source: {src}")
-            # Optional raw output for debugging
-            with st.expander("Show raw AI output", expanded=False):
-                st.code(st.session_state.get("chem_ai_last_raw", ""))
 
         if st.button("Save Chemical", type="primary"):
             # Basic validations
@@ -2561,9 +2641,15 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                         "functional_categories": prefer_manual_csv(st.session_state.get("chem_func"), "functional_categories"),
                         "industry_segments": prefer_manual_csv(st.session_state.get("chem_inds"), "industry_segments"),
                         "key_applications": prefer_manual_csv(st.session_state.get("chem_keys"), "key_applications"),
-                        "typical_dosage": prefer_manual_jsonarr(st.session_state.get("chem_dosage_json"), "typical_dosage"),
+                        "typical_dosage": (
+                            _parse_kv_lines(st.session_state.get("chem_dosage_json"))
+                            or prefer_manual_jsonarr(st.session_state.get("chem_dosage_json"), "typical_dosage")
+                        ),
                         "appearance": prefer_manual_str(st.session_state.get("chem_appearance"), "appearance"),
-                        "physical_snapshot": prefer_manual_jsonarr(st.session_state.get("chem_phys_json"), "physical_snapshot"),
+                        "physical_snapshot": (
+                            _parse_kv_lines(st.session_state.get("chem_phys_json"))
+                            or prefer_manual_jsonarr(st.session_state.get("chem_phys_json"), "physical_snapshot")
+                        ),
                         "compatibilities": prefer_manual_csv(st.session_state.get("chem_compat"), "compatibilities"),
                         "incompatibilities": prefer_manual_csv(st.session_state.get("chem_incompat"), "incompatibilities"),
                         "sensitivities": prefer_manual_csv(st.session_state.get("chem_sens"), "sensitivities"),
@@ -2801,4 +2887,3 @@ if st.session_state.get("main_section") == "market":
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
     st.info("🚧 Coming soon")
     st.markdown('</div>', unsafe_allow_html=True)
-
