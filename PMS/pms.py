@@ -1052,56 +1052,21 @@ def get_types_for_category(category: str) -> list[str]:
     """Return product types for a category.
 
     Priority:
-    1) Chemical Master Data (chemical_types.name where category matches)
-    2) Excel-driven mapping if available (case-insensitive category match)
-    3) In-code mapping fallback
+    Only from Chemical Master Data (chemical_types.name where category matches).
+    Removes hardcoded and Excel-mapped types so the list reflects saved records only.
     """
     if not category:
         return []
-
-    collected: set[str] = set()
-
-    # 1) Live from DB: chemical_types where category matches
     try:
         res_db = supabase.table("chemical_types").select("name,category").eq("category", category).execute()
+        names = []
         for row in (res_db.data or []):
-            name = (row.get("name") or "").strip()
-            if name:
-                collected.add(name)
+            nm = (row.get("name") or "").strip()
+            if nm:
+                names.append(nm)
+        return sorted(set(names))
     except Exception:
-        pass
-
-    # 2) Excel mapping (if file loads successfully)
-    try:
-        excel_map = get_category_type_mapping() or {}
-        if excel_map:
-            # Exact match first
-            if category in excel_map:
-                for t in excel_map[category]:
-                    t_str = (str(t) or "").strip()
-                    if t_str:
-                        collected.add(t_str)
-                return sorted(collected)
-            # Case-insensitive match
-            cat_lower = category.strip().lower()
-            for k, v in excel_map.items():
-                if str(k).strip().lower() == cat_lower:
-                    for t in v:
-                        t_str = (str(t) or "").strip()
-                        if t_str:
-                            collected.add(t_str)
-                    return sorted(collected)
-    except Exception:
-        # Fall through to in-code mapping
-        pass
-
-    # 3) In-code mapping fallback (merge)
-    for t in CATEGORY_TO_TYPES.get(category, []):
-        t_str = (str(t) or "").strip()
-        if t_str:
-            collected.add(t_str)
-
-    return sorted(collected)
+        return []
 
 def upload_tds_to_supabase(uploaded_file, product_id: str):
     if not uploaded_file:
