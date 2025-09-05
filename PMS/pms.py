@@ -1052,31 +1052,56 @@ def get_types_for_category(category: str) -> list[str]:
     """Return product types for a category.
 
     Priority:
-    1) Chemical Master Data (by industry segment contains category)
+    1) Chemical Master Data (chemical_types.name where category matches)
     2) Excel-driven mapping if available (case-insensitive category match)
     3) In-code mapping fallback
     """
     if not category:
         return []
 
-    # 1) Excel mapping (if file loads successfully)
+    collected: set[str] = set()
+
+    # 1) Live from DB: chemical_types where category matches
+    try:
+        res_db = supabase.table("chemical_types").select("name,category").eq("category", category).execute()
+        for row in (res_db.data or []):
+            name = (row.get("name") or "").strip()
+            if name:
+                collected.add(name)
+    except Exception:
+        pass
+
+    # 2) Excel mapping (if file loads successfully)
     try:
         excel_map = get_category_type_mapping() or {}
         if excel_map:
             # Exact match first
             if category in excel_map:
-                return list(excel_map[category])
+                for t in excel_map[category]:
+                    t_str = (str(t) or "").strip()
+                    if t_str:
+                        collected.add(t_str)
+                return sorted(collected)
             # Case-insensitive match
             cat_lower = category.strip().lower()
             for k, v in excel_map.items():
                 if str(k).strip().lower() == cat_lower:
-                    return list(v)
+                    for t in v:
+                        t_str = (str(t) or "").strip()
+                        if t_str:
+                            collected.add(t_str)
+                    return sorted(collected)
     except Exception:
         # Fall through to in-code mapping
         pass
 
-    # 2) Fallback to in-code mapping
-    return CATEGORY_TO_TYPES.get(category, [])
+    # 3) In-code mapping fallback (merge)
+    for t in CATEGORY_TO_TYPES.get(category, []):
+        t_str = (str(t) or "").strip()
+        if t_str:
+            collected.add(t_str)
+
+    return sorted(collected)
 
 def upload_tds_to_supabase(uploaded_file, product_id: str):
     if not uploaded_file:
@@ -1247,7 +1272,7 @@ nav_items = [
     },
     {
         "key": "sourcing", 
-        "title": "📋 Sourcing Master Data",
+        "title": "📋 TDS Master Data",
         "subtitle": "TDS Management",
         "description": "Handle Technical Data Sheets & supplier information",
         "icon": "📋",
@@ -1365,32 +1390,18 @@ if st.session_state.get("main_section") == "sourcing" and has_sourcing_master_ac
 
 # UI - Add Product
 if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "add" and has_sourcing_master_access(user_email):
-    st.markdown('<h1 style="color:#1976d2; font-weight:700;">Add TDS / Sourcing</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 style="color:#1976d2; font-weight:700;">Add TDS</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
     with st.container():
         st.subheader("Basic Information")
         name = st.text_input("Product Name *", placeholder="Unique product name")
-        # Category select or add new (Add-new disables the dropdown)
-        col_cat1, col_cat2 = st.columns([3, 1])
-        with col_cat1:
-            selected_category = st.selectbox(
-                "Category *",
-                FIXED_CATEGORIES,
-                key="category_select",
-                disabled=st.session_state.get("add_new_category", False)
-            )
-        with col_cat2:
-            add_new_category = st.checkbox("Add new category", key="add_new_category")
-        if add_new_category:
-            new_category = st.text_input(
-                "New Category Name",
-                placeholder="Enter new category name",
-                key="new_category_name"
-            )
-            category = (new_category or "").strip()
-        else:
-            category = selected_category
+        # Category select (selection only; no add)
+        category = st.selectbox(
+            "Chemical Category *",
+            FIXED_CATEGORIES,
+            key="category_select"
+        )
         # Reset type controls when category changes
         prev_cat = st.session_state.get("category_select_prev")
         if prev_cat != category:
@@ -1406,33 +1417,18 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             # Force a rerun so dependent widgets refresh their options for the new category
             st.rerun()
 
-        # Product Type filtered by selected category (from Excel) + add new
+        # Product Type filtered by selected category (selection only; no add)
         existing_types = get_types_for_category(category)
-        type_options = existing_types  # only types under the selected category
-        col_t1, col_t2 = st.columns([3, 1])
-        # Per-category keys to avoid stale state across category changes
-        key_base = (category or 'none').replace(' ', '_').replace('&', 'and')
-        type_checkbox_key = f"add_new_type_{key_base}"
-        type_select_key = f"type_select_{key_base}"
-        type_input_key = f"new_type_name_{key_base}"
-        with col_t1:
-            if type_options:
-                selected_type = st.selectbox(
-                    "Product Type *",
-                    options=type_options,
-                    key=type_select_key,
-                    disabled=st.session_state.get(type_checkbox_key, False)
-                )
-            else:
-                st.info("No mapped product types for this category. Use 'Add new type'.")
-                selected_type = ""
-        with col_t2:
-            add_type_clicked = st.checkbox("Add new type", key=type_checkbox_key)
-        new_type = None
-        if add_type_clicked:
-            new_type = st.text_input("New Type Name", placeholder="Enter new product type", key=type_input_key)
-            if new_type:
-                selected_type = new_type.strip()
+        type_options = existing_types
+        if type_options:
+            selected_type = st.selectbox(
+                "Product Type *",
+                options=type_options,
+                key=f"type_select_{(category or 'none').replace(' ', '_').replace('&', 'and')}"
+            )
+        else:
+            st.info("No mapped product types for this category in Chemical Master Data.")
+            selected_type = ""
 
         description = st.text_area("Description", placeholder="Optional description", height=100)
 
@@ -1467,8 +1463,16 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                 if st.button("🤖 Extract with AI", type="secondary"):
                     extracted_data = process_tds_with_ai(uploaded_file)
                     if extracted_data:
+                        # Normalize keys (case/space variations)
+                        norm = {}
+                        for k, v in extracted_data.items():
+                            nk = str(k).strip().lower().replace(" ", "_")
+                            norm[nk] = v
                         st.session_state["extracted_tds_data"] = extracted_data
+                        st.session_state["extracted_tds_data_norm"] = norm
+                        st.session_state["tds_hydrate_pending"] = True
                         st.success("✅ AI extraction completed!")
+                        st.rerun()
                     else:
                         st.error("❌ AI extraction failed. Please check your file.")
             with col_ai_process2:
@@ -1481,49 +1485,95 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             st.info("🤖 AI will automatically extract information from the uploaded TDS file")
         else:
             st.warning("⚠️ Gemini AI not configured. Please set GEMINI_API_KEY in your environment variables.")
+
+        # Debug: show extracted values to confirm hydration source
+        _ex_debug = st.session_state.get("extracted_tds_data")
+        if _ex_debug:
+            with st.expander("Show extracted values", expanded=False):
+                st.json(_ex_debug)
+                _ex_norm = st.session_state.get("extracted_tds_data_norm") or {}
+                if _ex_norm:
+                    st.caption("Normalized")
+                    st.json(_ex_norm)
         
         # AI TDS Information Extraction fields
+        # One-time hydration after an extract click
+        def _ensure_hydrated():
+            _n = st.session_state.get("extracted_tds_data_norm") or {}
+            if not _n and st.session_state.get("extracted_tds_data"):
+                # Build norm from legacy stored dict
+                _tmp = st.session_state.get("extracted_tds_data") or {}
+                _n = {str(k).strip().lower().replace(" ", "_"): v for k, v in _tmp.items()}
+                st.session_state["extracted_tds_data_norm"] = _n
+            if not _n:
+                return
+            st.session_state["tds_generic_name"] = st.session_state.get("tds_generic_name") or _n.get("generic_product_name", _n.get("generic_name", "")) or ""
+            st.session_state["tds_trade_name"] = st.session_state.get("tds_trade_name") or _n.get("trade_name", _n.get("model_name", "")) or ""
+            st.session_state["tds_supplier_name"] = st.session_state.get("tds_supplier_name") or _n.get("supplier_name", "") or ""
+            st.session_state["tds_packaging"] = st.session_state.get("tds_packaging") or _n.get("packaging_size_&_type", _n.get("packaging_size_type", "")) or ""
+            st.session_state["tds_net_weight"] = st.session_state.get("tds_net_weight") or _n.get("net_weight", "") or ""
+            st.session_state["tds_hs_code"] = st.session_state.get("tds_hs_code") or _n.get("hs_code", "") or ""
+            st.session_state["tds_tech_spec"] = st.session_state.get("tds_tech_spec") or _n.get("technical_specification", _n.get("technical_specs", "")) or ""
+
+        if st.session_state.get("tds_hydrate_pending"):
+            _ensure_hydrated()
+            st.session_state["tds_hydrate_pending"] = False
+        else:
+            # Also hydrate opportunistically if fields are empty but we have extracted data
+            if st.session_state.get("extracted_tds_data") and (
+                not st.session_state.get("tds_generic_name")
+                and not st.session_state.get("tds_trade_name")
+                and not st.session_state.get("tds_supplier_name")
+            ):
+                _ensure_hydrated()
+
         col_ai1, col_ai2 = st.columns(2)
+        _norm_vals = st.session_state.get("extracted_tds_data_norm") or {}
+        
         with col_ai1:
-            # Get extracted data from session state
-            extracted_data = st.session_state.get("extracted_tds_data", {})
-            
             generic_product_name = st.text_input(
-                "Generic Product Name", 
-                value=extracted_data.get("Generic Product Name", ""),
-                placeholder="AI extracted generic name"
+                "Generic Product Name",
+                value=st.session_state.get("tds_generic_name") or _norm_vals.get("generic_product_name", ""),
+                placeholder="AI extracted generic name",
+                key="tds_generic_name"
             )
             trade_name = st.text_input(
                 "Trade Name (Model Name)", 
-                value=extracted_data.get("Trade Name", ""),
-                placeholder="AI extracted trade/model name"
+                value=st.session_state.get("tds_trade_name") or _norm_vals.get("trade_name", ""),
+                placeholder="AI extracted trade/model name",
+                key="tds_trade_name"
             )
             supplier_name = st.text_input(
                 "Supplier Name", 
-                value=extracted_data.get("Supplier Name", ""),
-                placeholder="AI extracted supplier name"
+                value=st.session_state.get("tds_supplier_name") or _norm_vals.get("supplier_name", ""),
+                placeholder="AI extracted supplier name",
+                key="tds_supplier_name"
             )
             packaging_size_type = st.text_input(
                 "Packaging Size & Type", 
-                value=extracted_data.get("Packaging Size & Type", ""),
-                placeholder="AI extracted packaging info"
+                value=st.session_state.get("tds_packaging") or _norm_vals.get("packaging_size_&_type", ""),
+                placeholder="AI extracted packaging info",
+                key="tds_packaging"
             )
         with col_ai2:
             net_weight = st.text_input(
                 "Net Weight", 
-                value=extracted_data.get("Net Weight", ""),
-                placeholder="AI extracted weight"
+                value=st.session_state.get("tds_net_weight") or _norm_vals.get("net_weight", ""),
+                placeholder="AI extracted weight",
+                key="tds_net_weight"
             )
             hs_code = st.text_input(
                 "HS Code", 
-                value=extracted_data.get("HS Code", ""),
-                placeholder="AI extracted HS code"
+                value=st.session_state.get("tds_hs_code") or _norm_vals.get("hs_code", ""),
+                placeholder="AI extracted HS code",
+                key="tds_hs_code"
             )
             technical_spec = st.text_area(
                 "Technical Specification", 
-                value=extracted_data.get("Technical Specification", ""),
+                value=st.session_state.get("tds_tech_spec") or _norm_vals.get("technical_specification", ""),
                 placeholder="AI extracted technical specifications", 
-                height=100
+                height=100,
+                key="tds_tech_spec"
             )
 
 
@@ -1610,21 +1660,53 @@ def search_chemicals_by_name(query: str) -> list[dict]:
             return []
         # Case-insensitive partial match when available
         try:
-            res = supabase.table("chemical_types").select("id,generic_name,industry_segments,functional_categories,hs_codes").ilike("generic_name", f"%{q}%").limit(10).execute()
+            res = supabase.table("chemical_types").select("id,name,applications,spec_template,metadata,hs_code,category").ilike("name", f"%{q}%").limit(10).execute()
         except Exception:
             # Fallback: exact match only
-            res = supabase.table("chemical_types").select("id,generic_name,industry_segments,functional_categories,hs_codes").eq("generic_name", q).limit(10).execute()
-        return res.data or []
+            res = supabase.table("chemical_types").select("id,name,applications,spec_template,metadata,hs_code,category").eq("name", q).limit(10).execute()
+        rows = res.data or []
+        return [_map_type_record_to_legacy(r) for r in rows]
     except Exception:
         return []
 
+def _map_type_record_to_legacy(rec: dict) -> dict:
+    try:
+        meta = rec.get("metadata") or {}
+        spec = rec.get("spec_template") or {}
+        out = {
+            **rec,
+            # legacy keys synthesized from new schema
+            "generic_name": rec.get("name"),
+            "key_applications": rec.get("applications") or [],
+            "typical_dosage": spec.get("typical_dosage") or [],
+            "physical_snapshot": spec.get("physical_snapshot") or [],
+            # pull-throughs from metadata for compatibility
+            "industry_segments": meta.get("industry_segments") or [],
+            "functional_categories": meta.get("functional_categories") or [],
+            "appearance": meta.get("appearance"),
+            "compatibilities": meta.get("compatibilities") or [],
+            "incompatibilities": meta.get("incompatibilities") or [],
+            "sensitivities": meta.get("sensitivities") or [],
+            "storage_conditions": meta.get("storage_conditions"),
+            "packaging_options": meta.get("packaging_options") or [],
+            "summary_80_20": meta.get("summary_80_20"),
+            "summary_technical": meta.get("summary_technical"),
+            "data_completeness": meta.get("data_completeness", rec.get("data_completeness")),
+            # hs_codes legacy list can live in metadata (keep if present)
+            "hs_codes": meta.get("hs_codes") or [],
+        }
+        return out
+    except Exception:
+        return rec
+
 def fetch_chemicals() -> list[dict]:
     try:
-        # First attempt: ordered by generic_name
+        # First attempt: ordered by name
         query = supabase.table("chemical_types").select("*")
         try:
-            res = query.order("generic_name").execute()
+            res = query.order("name").execute()
             data = res.data or []
+            data = [_map_type_record_to_legacy(r) for r in data]
             try:
                 st.session_state["chem_fetch_meta"] = {
                     "count": len(data),
@@ -1638,6 +1720,7 @@ def fetch_chemicals() -> list[dict]:
             # Fallback: fetch without order in case ordering causes an error
             res2 = query.execute()
             data2 = res2.data or []
+            data2 = [_map_type_record_to_legacy(r) for r in data2]
             try:
                 st.session_state["chem_fetch_meta"] = {
                     "count": len(data2),
@@ -1652,11 +1735,70 @@ def fetch_chemicals() -> list[dict]:
         # Final fallback: return empty list
         return []
 
-def create_chemical(payload: dict):
-    return supabase.table("chemical_types").insert(payload).execute()
+def _map_ui_payload_to_type_record(ui: dict) -> dict:
+    try:
+        # Core fields per 80/20 schema
+        name = (ui.get("generic_name") or "").strip()
+        category = st.session_state.get("chem_selected_category") or None
+        # hs_code: take first code if available
+        hs_codes = ui.get("hs_codes") or []
+        hs_code = None
+        try:
+            if isinstance(hs_codes, list) and hs_codes:
+                first = hs_codes[0]
+                if isinstance(first, dict):
+                    hs_code = (first.get("code") or None)
+                else:
+                    hs_code = str(first)
+        except Exception:
+            hs_code = None
+        applications = ui.get("key_applications") or []
+        # spec_template: keep meaningful structure if available
+        spec_template = {
+            "typical_dosage": ui.get("typical_dosage") or [],
+            "physical_snapshot": ui.get("physical_snapshot") or [],
+        }
+        # metadata: catch-all of remaining fields
+        metadata = {k: v for k, v in ui.items() if k not in {"generic_name","hs_codes","key_applications","typical_dosage","physical_snapshot"}}
+        return {
+            "id": ui.get("id") or None,
+            "name": name or None,
+            "category": category,
+            "hs_code": hs_code,
+            "applications": applications if isinstance(applications, list) else [],
+            "spec_template": spec_template,
+            "metadata": metadata,
+        }
+    except Exception:
+        # Fallback: store everything in metadata
+        return {
+            "name": (ui.get("generic_name") or None),
+            "metadata": ui,
+        }
+
+def create_chemical(ui_payload: dict):
+    type_rec = _map_ui_payload_to_type_record(ui_payload)
+    # Remove None id to let DB default generate
+    if not type_rec.get("id"):
+        type_rec.pop("id", None)
+    return supabase.table("chemical_types").insert(type_rec).execute()
 
 def update_chemical(chemical_id: str, updates: dict):
-    return supabase.table("chemical_types").update(updates).eq("id", chemical_id).execute()
+    # Merge strategy: update core columns when present; push everything into metadata as well
+    type_updates = {}
+    ui_map = _map_ui_payload_to_type_record({**updates, "id": chemical_id})
+    for key in ["name","category","hs_code","applications","spec_template"]:
+        if ui_map.get(key) is not None:
+            type_updates[key] = ui_map[key]
+    # Merge metadata: fetch current then merge
+    try:
+        curr = supabase.table("chemical_types").select("metadata").eq("id", chemical_id).limit(1).execute()
+        curr_meta = ((curr.data or [{}])[0] or {}).get("metadata") or {}
+    except Exception:
+        curr_meta = {}
+    new_meta = {**curr_meta, **ui_map.get("metadata", {})}
+    type_updates["metadata"] = new_meta
+    return supabase.table("chemical_types").update(type_updates).eq("id", chemical_id).execute()
 
 def delete_chemical(chemical_id: str):
     return supabase.table("chemical_types").delete().eq("id", chemical_id).execute()
