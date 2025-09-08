@@ -531,6 +531,10 @@ if "sb_session" in st.session_state:
     except Exception:
         pass
 
+# Auth UI mode (login/signup)
+if "auth_mode" not in st.session_state:
+    st.session_state["auth_mode"] = "login"
+
 # ---------- Strict Auth Gate (login required for any access) ----------
 def _render_login_screen():
     # Full width login container with logo and title aligned
@@ -549,41 +553,77 @@ def _render_login_screen():
     </div>
     """.format(_get_logo_base64()), unsafe_allow_html=True)
     
-    # Login form - always visible
-    with st.form("login_form_full", clear_on_submit=False):
-        email = st.text_input("📧 Email Address", placeholder="you@example.com", help="Enter your registered email address")
-        password = st.text_input("🔐 Password", type="password", placeholder="Enter your password", help="Enter your account password")
-        
-        # Center the button without using columns
-        st.markdown('<div style="text-align: center; margin-top: 1rem;">', unsafe_allow_html=True)
-        submit = st.form_submit_button("🚀 Sign In", use_container_width=False, type="primary")
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-    if submit:
-        if not email or not password:
-            st.error("🚫 Please enter both email and password")
-        else:
-            with st.spinner("🔐 Authenticating..."):
-                try:
-                    resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                    if resp and getattr(resp, "user", None) and getattr(resp, "session", None):
-                        user_role = ((resp.user.user_metadata or {}).get("role") if hasattr(resp.user, "user_metadata") else None) or "viewer"
-                        st.session_state["sb_user"] = {
-                            "id": resp.user.id,
-                            "email": resp.user.email,
-                            "role": user_role,
-                        }
-                        st.session_state["sb_session"] = {
-                            "access_token": resp.session.access_token,
-                            "refresh_token": resp.session.refresh_token,
-                        }
-                        st.success("✅ Login successful! Redirecting...")
+    # Auth forms
+    mode = st.session_state.get("auth_mode", "login")
+    if mode == "login":
+        with st.form("login_form_full", clear_on_submit=False):
+            email = st.text_input("📧 Email Address", placeholder="you@example.com", help="Enter your registered email address")
+            password = st.text_input("🔐 Password", type="password", placeholder="Enter your password", help="Enter your account password")
+            
+            # Center the button without using columns
+            st.markdown('<div style="text-align: center; margin-top: 1rem;">', unsafe_allow_html=True)
+            submit = st.form_submit_button("🚀 Sign In", use_container_width=False, type="primary")
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        # Switch to signup
+        if st.button("Create an account", type="secondary"):
+            st.session_state["auth_mode"] = "signup"
+            st.rerun()
+
+        if submit:
+            if not email or not password:
+                st.error("🚫 Please enter both email and password")
+            else:
+                with st.spinner("🔐 Authenticating..."):
+                    try:
+                        resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                        if resp and getattr(resp, "user", None) and getattr(resp, "session", None):
+                            user_role = ((resp.user.user_metadata or {}).get("role") if hasattr(resp.user, "user_metadata") else None) or "viewer"
+                            st.session_state["sb_user"] = {
+                                "id": resp.user.id,
+                                "email": resp.user.email,
+                                "role": user_role,
+                            }
+                            st.session_state["sb_session"] = {
+                                "access_token": resp.session.access_token,
+                                "refresh_token": resp.session.refresh_token,
+                            }
+                            st.success("✅ Login successful! Redirecting...")
+                            st.rerun()
+                        else:
+                            st.error("❌ Invalid login response")
+                    except Exception as e:
+                        st.error(f"❌ Login failed: {e}")
+    else:
+        # Signup form
+        with st.form("signup_form_full", clear_on_submit=False):
+            su_email = st.text_input("📧 Email Address", placeholder="you@example.com")
+            su_password = st.text_input("🔐 Password", type="password", placeholder="Create a password")
+            su_password2 = st.text_input("🔐 Confirm Password", type="password", placeholder="Re-enter your password")
+            st.markdown('<div style="text-align: center; margin-top: 1rem;">', unsafe_allow_html=True)
+            su_submit = st.form_submit_button("✨ Create Account", use_container_width=False, type="primary")
+            st.markdown('</div>', unsafe_allow_html=True)
+        if st.button("Already have an account? Sign in", type="secondary"):
+            st.session_state["auth_mode"] = "login"
+            st.rerun()
+
+        if su_submit:
+            if not su_email or not su_password or not su_password2:
+                st.error("🚫 Please fill in all fields")
+            elif su_password != su_password2:
+                st.error("🚫 Passwords do not match")
+            elif len(su_password) < 6:
+                st.error("🚫 Password must be at least 6 characters")
+            else:
+                with st.spinner("📝 Creating your account..."):
+                    try:
+                        resp = supabase.auth.sign_up({"email": su_email, "password": su_password})
+                        # Supabase may require email verification
+                        st.success("✅ Account created. Please check your email to verify your account, then sign in.")
+                        st.session_state["auth_mode"] = "login"
                         st.rerun()
-                    else:
-                        st.error("❌ Invalid login response")
-                except Exception as e:
-                    st.error(f"❌ Login failed: {e}")
+                    except Exception as e:
+                        st.error(f"❌ Sign up failed: {e}")
     
     # System description with three key points
     st.markdown("""
