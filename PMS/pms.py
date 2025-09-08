@@ -31,7 +31,7 @@ st.markdown("""
 
 /* Global Styles */
 .stApp {
-    background: white;
+    background: #f3f9ff; /* Very light blue after login */
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
@@ -1515,89 +1515,20 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         st.markdown("---")
         st.subheader("Technical Data Sheet (TDS)")
         st.warning("⚠️ TDS upload is required. Products cannot be saved without a TDS file.")
-        # Mobile-friendly upload options
-        upload_mode = st.radio(
-            "Choose upload method",
-            options=["File Picker", "Camera", "URL"],
-            index=0,
-            horizontal=True,
-            key="tds_upload_mode"
+        # Single file picker only (mobile-friendly)
+        uploaded_file = st.file_uploader(
+            "Upload TDS (PDF/DOCX/Images) — max 10MB *",
+            type=ALLOWED_FILE_EXTS,
+            key="tds_file_picker",
+            accept_multiple_files=False,
         )
 
-        uploaded_file = None
-        camera_file = None
-        url_input = None
-        if upload_mode == "File Picker":
-            uploaded_file = st.file_uploader(
-                "Upload TDS (PDF/DOCX/Images) — max 10MB *",
-                type=ALLOWED_FILE_EXTS,
-                key="tds_file_picker"
-            )
-        elif upload_mode == "Camera":
-            camera_file = st.camera_input("Capture TDS (photo)", key="tds_camera_input")
-        else:
-            url_input = st.text_input("TDS File URL (PDF/DOCX/Image)", placeholder="https://...")
-
-        # Helper: download a file from URL and adapt to UploadedFile-like object
-        def _download_url_as_upload(url: str):
-            try:
-                import requests  # type: ignore
-                r = requests.get(url, timeout=20)
-                if r.status_code != 200:
-                    return None, f"Download failed with status {r.status_code}"
-                content = r.content or b""
-                if not content:
-                    return None, "Downloaded file is empty"
-                # Determine extension from URL or content-type
-                ext = None
-                # Try URL extension
-                try:
-                    from urllib.parse import urlparse
-                    path = urlparse(url).path
-                    if "." in path:
-                        ext = path.split(".")[-1].lower()
-                except Exception:
-                    ext = None
-                if not ext:
-                    ctype = r.headers.get("Content-Type", "").lower()
-                    mapping = {
-                        "application/pdf": "pdf",
-                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-                        "application/msword": "doc",
-                        "image/png": "png",
-                        "image/jpeg": "jpg",
-                    }
-                    ext = mapping.get(ctype, None)
-                if ext not in ALLOWED_FILE_EXTS:
-                    return None, f"Unsupported or unknown file type from URL. Allowed: {', '.join(ALLOWED_FILE_EXTS)}"
-                # Build an object with .name, .size, .getvalue()
-                class _UrlUploaded:
-                    def __init__(self, name: str, data: bytes):
-                        self.name = name
-                        self._data = data
-                        self.size = len(data)
-                    def getvalue(self):
-                        return self._data
-                filename = f"downloaded.{ext}"
-                return _UrlUploaded(filename, content), None
-            except Exception as e:
-                return None, str(e)
-
-        # AI Processing Button
-        # Determine a single file-like object for downstream
-        effective_file = uploaded_file or camera_file
-        if (not effective_file) and url_input:
-            url_obj, url_err = _download_url_as_upload(url_input)
-            if url_err:
-                st.error(f"URL error: {url_err}")
-            else:
-                effective_file = url_obj
-
-        if effective_file and gemini_model:
+        # AI Processing Button (single source)
+        if uploaded_file and gemini_model:
             col_ai_process1, col_ai_process2 = st.columns([1, 3])
             with col_ai_process1:
                 if st.button("🤖 Extract with AI", type="secondary"):
-                    extracted_data = process_tds_with_ai(effective_file)
+                    extracted_data = process_tds_with_ai(uploaded_file)
                     if extracted_data:
                         # Normalize keys robustly (case/space/punctuation variations)
                         import re as _re_norm_keys
@@ -1767,17 +1698,11 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             st.error("A product with this name already exists")
         elif not selected_type:
             st.error("Product Type is required. Select a type or enter a new one.")
-        elif not (uploaded_file or camera_file or (url_input and url_input.strip())):
-            st.error("TDS file is required. Please upload, capture, or provide a URL before saving the product.")
+        elif not uploaded_file:
+            st.error("TDS file is required. Please upload a TDS file before saving the product.")
         else:
             # Validate file
-            # Choose source precedence: file picker > camera > URL
-            source_file = uploaded_file or camera_file
-            if (not source_file) and url_input:
-                source_file, url_err = _download_url_as_upload(url_input)
-                if url_err:
-                    st.error(f"URL error: {url_err}")
-                    st.stop()
+            source_file = uploaded_file
             f_ok, f_msg = validate_file(source_file)
             if not f_ok:
                 st.error(f_msg)
