@@ -213,6 +213,21 @@ button[kind="secondary"] {
     transition: all 0.3s ease;
 }
 
+/* Equal-size ONLY for the top nav module buttons */
+.nav-buttons button[kind="primary"],
+.nav-buttons button[kind="secondary"] {
+    height: 120px;
+    min-height: 120px;
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.2;
+    word-break: break-word;
+}
+
 button[kind="secondary"]:hover {
     background: rgba(147, 197, 253, 0.1);
     border-color: #93c5fd;
@@ -375,66 +390,43 @@ h2 {
 
 /* Dark mode adjustments */
 @media (prefers-color-scheme: dark) {
-    body {
-        background-color: #1e1e1e; /* Darker background */
+    :root, .stApp {
+        --bg: #0E1117;
+        --panel: #262730;
+        --text: #FAFAFA;
+        --muted: #CBD5E1;
     }
-    .stApp {
-        background-color: #1e1e1e;
-    }
-    /* Login screen background in dark mode */
+    body { background-color: var(--bg); }
+    .stApp { background-color: var(--bg); }
     .stApp:has(.wide-login-container) {
         background: linear-gradient(135deg, #60a5fa 0%, #93c5fd 100%);
     }
-    .main .block-container {
-        padding-top: 40px;
-        padding-right: 60px;
-        padding-left: 60px;
-        padding-bottom: 40px;
+    .main .block-container { background: rgba(22, 27, 34, 0.85); }
+    .css-1d391kg, .css-1v0mbdj, .feature-box, .form-card {
+        background-color: var(--panel);
+        color: var(--text);
     }
-    .css-1d391kg, .css-1v0mbdj {
-        background-color: #2c2c2c;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-    input {
+    /* Ensure all text is readable */
+    .stApp, .stApp * { color: #FAFAFA !important; }
+
+    /* Fix inline hard-coded colors */
+    h1, h2, h3, h4, p, span, div { color: #FAFAFA !important; }
+
+    /* Muted text (secondary info) */
+    .hint, .caption, small { color: #A0AEC0 !important; }
+
+    /* Input fields */
+    input, textarea, select {
         border: 1px solid #444;
-        background-color: #333;
-        color: #f0f0f0;
+        background-color: #1F2430 !important;
+        color: #FAFAFA !important;
     }
-    button[kind="primary"] {
-        background-color: #1a4d7d; /* Dark mode blue */
-    }
-    button[kind="primary"]:hover {
-        background-color: #12395a; /* Darker shade on hover */
-    }
-    h1, h2, h3, h4 {
-        color: #f0f0f0;
-    }
-    .feature-box {
-        background-color: #2c2c2c;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
-    }
-    .feature-box:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.45);
-    }
-    .stMarkdown > div > p {
-        color: #cccccc;
-    }
-    .form-card {
-        background-color: #2c2c2c;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-    .hint {
-        color: #cccccc;
-    }
-    /* Force readable text in dark mode (global) */
-    .stApp, .stApp * { color: #e5e7eb !important; }
-    .stApp a, .stApp a * { color: #93c5fd !important; }
-    /* Alerts/notifications */
-    .stAlert, [role="alert"], .stInfo, .stSuccess, .stWarning, .stError,
-    .stAlert *, [role="alert"] *, .stInfo *, .stSuccess *, .stWarning *, .stError * {
-        color: #ffffff !important;
-    }
+    ::placeholder { color: #9CA3AF !important; }
+
+    /* Buttons */
+    button[kind="primary"], button[kind="secondary"] { color: #ffffff !important; }
+    a { color: #93c5fd !important; }
+    .stAlert, [role="alert"] { color: #ffffff !important; }
 }
 
 .wide-login-container {
@@ -553,7 +545,7 @@ def _render_login_screen():
                 <h2 style="margin: 0; color: #1e40af; font-size: clamp(1rem, 3.5vw, 1.8rem); font-weight: 600;">Product Management System</h2>
             </div>
         </div>
-        <p style="color: #718096; margin-top: 1rem; font-size: 1.1rem; text-align: center;">Sign in to access your dashboard</p>
+        <p style="margin-top: 1rem; font-size: 1.1rem; text-align: center;">Sign in to access your dashboard</p>
     </div>
     """.format(_get_logo_base64()), unsafe_allow_html=True)
     
@@ -863,7 +855,7 @@ CATEGORY_TO_TYPES = {
     "Others": [],
 }
 
-ALLOWED_FILE_EXTS = ["pdf", "docx", "doc", "png", "jpg", "jpeg"]
+ALLOWED_FILE_EXTS = ["pdf", "docx", "doc", "png", "jpg", "jpeg", "heic", "heif", "webp"]
 MAX_FILE_MB = 10
 
 # Excel-driven category/type mapping
@@ -1161,7 +1153,7 @@ def extract_text_from_file(uploaded_file):
                 text += paragraph.text + "\n"
             return text
             
-        elif file_extension in ['png', 'jpg', 'jpeg']:
+        elif file_extension in ['png', 'jpg', 'jpeg', 'heic', 'heif', 'webp']:
             # For images, we'll need to use OCR or send to Gemini Vision
             # For now, return a placeholder - you can implement OCR here
             return "Image file detected. OCR processing needed."
@@ -1360,6 +1352,8 @@ accessible_nav_items = [item for item in nav_items if item["access"]]
 # Adjust column layout based on number of accessible items
 if len(accessible_nav_items) > 0:
     nav_cols = st.columns(len(accessible_nav_items))
+    # Wrap buttons in a container to scope equal-size CSS
+    st.markdown('<div class="nav-buttons">', unsafe_allow_html=True)
     
     for i, item in enumerate(accessible_nav_items):
         with nav_cols[i]:
@@ -1387,6 +1381,7 @@ if len(accessible_nav_items) > 0:
             if button_clicked:
                 st.session_state["main_section"] = item["key"]
                 st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 else:
     st.warning("You don't have access to any modules. Please contact your administrator.")
 
@@ -1521,6 +1516,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             type=ALLOWED_FILE_EXTS,
             key="tds_file_picker",
             accept_multiple_files=False,
+            help="Tip: On mobile, choose 'Files' or 'Browse' to pick from device storage."
         )
 
         # AI Processing Button (single source)
