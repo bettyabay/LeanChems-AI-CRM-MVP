@@ -1094,6 +1094,52 @@ def name_exists(name: str) -> bool:
     res = supabase.table("product_master").select("id").eq("name", name.strip()).limit(1).execute()
     return bool(res.data)
 
+def _resolve_chemical_type_id(type_name: str, category: str) -> str | None:
+    try:
+        t = (type_name or "").strip()
+        if not t:
+            return None
+        query = supabase.table("chemical_types").select("id,name,category").eq("name", t)
+        if category:
+            query = query.eq("category", category)
+        res = query.limit(1).execute()
+        rows = res.data or []
+        if rows:
+            return rows[0].get("id")
+    except Exception:
+        pass
+    return None
+
+def _split_brand_grade(trade: str) -> tuple[str | None, str | None]:
+    try:
+        s = (trade or "").strip()
+        if not s:
+            return None, None
+        # Heuristic: first token brand, remainder grade
+        parts = s.split(None, 1)
+        if len(parts) == 1:
+            return parts[0], None
+        return parts[0], parts[1]
+    except Exception:
+        return None, None
+
+def create_tds_sourcing_entity(*, chemical_type_id: str | None, brand: str | None, grade: str | None, owner: str | None, source: str | None, specs: dict | None, metadata: dict | None):
+    try:
+        payload = {
+            "id": str(uuid.uuid4()),
+            "chemical_type_id": chemical_type_id,
+            "brand": brand or None,
+            "grade": grade or None,
+            "owner": owner or None,
+            "source": source or None,
+            "specs": specs or {},
+            "metadata": metadata or {},
+        }
+        supabase.table("tds_sourcing_data").insert(payload).execute()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
 def extract_text_from_file(uploaded_file):
     """Extract text from uploaded file (PDF, DOCX, or image)"""
     try:
@@ -1172,18 +1218,22 @@ def extract_tds_info_with_ai(text_content):
             st.warning(f"⚠️ Could not extract text from AI response: {text_error}")
             return None
         
-        # Parse the response
+        # Prefer JSON parsing when possible
+        parsed_json = _parse_lenient_json(raw_text)
+        if isinstance(parsed_json, dict):
+            return parsed_json
+
+        # Fallback: parse "Key: Value" lines
         extracted_info = {}
         if raw_text:
             lines = raw_text.split('\n')
-            
             for line in lines:
                 if ':' in line:
                     key, value = line.split(':', 1)
                     key = key.strip()
                     value = value.strip()
-                    extracted_info[key] = value
-        
+                    if key:
+                        extracted_info[key] = value
         return extracted_info
          
     except Exception as e:
@@ -1241,6 +1291,14 @@ nav_items = [
         "subtitle": "TDS Management",
         "description": "Handle Technical Data Sheets & supplier information",
         "icon": "📋",
+        "access": user_access["sourcing"]
+    },
+    {
+        "key": "sourcing_master",
+        "title": "📦 Sourcing Master Data",
+        "subtitle": "Sourcing Master",
+        "description": "Manage sourcing master data (coming soon)",
+        "icon": "📦",
         "access": user_access["sourcing"]
     },
     {
@@ -1306,6 +1364,12 @@ if st.session_state.get("main_section") == "chemical" and not has_chemical_maste
     st.stop()
 
 if st.session_state.get("main_section") == "sourcing" and not has_sourcing_master_access(user_email):
+    st.error("🚫 Access Denied: You don't have permission to access Sourcing Master Data. This module is restricted to Iman, Meraf, Alhadi, and Betty Abay.")
+    st.info("Please contact your administrator if you believe you should have access to this module.")
+    st.stop()
+
+# Access control for new Sourcing Master Data (Coming soon)
+if st.session_state.get("main_section") == "sourcing_master" and not has_sourcing_master_access(user_email):
     st.error("🚫 Access Denied: You don't have permission to access Sourcing Master Data. This module is restricted to Iman, Meraf, Alhadi, and Betty Abay.")
     st.info("Please contact your administrator if you believe you should have access to this module.")
     st.stop()
@@ -1428,11 +1492,18 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                 if st.button("🤖 Extract with AI", type="secondary"):
                     extracted_data = process_tds_with_ai(uploaded_file)
                     if extracted_data:
-                        # Normalize keys (case/space variations)
-                        norm = {}
-                        for k, v in extracted_data.items():
-                            nk = str(k).strip().lower().replace(" ", "_")
-                            norm[nk] = v
+                        # Normalize keys robustly (case/space/punctuation variations)
+                        import re as _re_norm_keys
+                        def _normalize_key(s: str) -> str:
+                            ns = str(s or "").strip().lower()
+                            ns = ns.replace("&", " and ")
+                            ns = ns.replace("-", "_")
+                            ns = ns.replace(" ", "_")
+                            ns = ns.replace("\u2013", "_").replace("\u2014", "_")
+                            ns = ns.replace('"', '').replace("'", "")
+                            ns = _re_norm_keys.sub(r"[^a-z0-9_]+", "", ns)
+                            return ns
+                        norm = { _normalize_key(k): v for k, v in extracted_data.items() }
                         st.session_state["extracted_tds_data"] = extracted_data
                         st.session_state["extracted_tds_data_norm"] = norm
                         st.session_state["tds_hydrate_pending"] = True
@@ -1451,15 +1522,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         else:
             st.warning("⚠️ Gemini AI not configured. Please set GEMINI_API_KEY in your environment variables.")
 
-        # Debug: show extracted values to confirm hydration source
-        _ex_debug = st.session_state.get("extracted_tds_data")
-        if _ex_debug:
-            with st.expander("Show extracted values", expanded=False):
-                st.json(_ex_debug)
-                _ex_norm = st.session_state.get("extracted_tds_data_norm") or {}
-                if _ex_norm:
-                    st.caption("Normalized")
-                    st.json(_ex_norm)
+        # (Debug section removed)
         
         # AI TDS Information Extraction fields
         # One-time hydration after an extract click
@@ -1468,74 +1531,89 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             if not _n and st.session_state.get("extracted_tds_data"):
                 # Build norm from legacy stored dict
                 _tmp = st.session_state.get("extracted_tds_data") or {}
-                _n = {str(k).strip().lower().replace(" ", "_"): v for k, v in _tmp.items()}
+                import re as _re_norm_keys
+                def _normalize_key(s: str) -> str:
+                    ns = str(s or "").strip().lower()
+                    ns = ns.replace("&", " and ")
+                    ns = ns.replace("-", "_")
+                    ns = ns.replace(" ", "_")
+                    ns = ns.replace("\u2013", "_").replace("\u2014", "_")
+                    ns = ns.replace('"', '').replace("'", "")
+                    ns = _re_norm_keys.sub(r"[^a-z0-9_]+", "", ns)
+                    return ns
+                _n = {_normalize_key(k): v for k, v in _tmp.items()}
                 st.session_state["extracted_tds_data_norm"] = _n
             if not _n:
                 return
-            st.session_state["tds_generic_name"] = st.session_state.get("tds_generic_name") or _n.get("generic_product_name", _n.get("generic_name", "")) or ""
-            st.session_state["tds_trade_name"] = st.session_state.get("tds_trade_name") or _n.get("trade_name", _n.get("model_name", "")) or ""
-            st.session_state["tds_supplier_name"] = st.session_state.get("tds_supplier_name") or _n.get("supplier_name", "") or ""
-            st.session_state["tds_packaging"] = st.session_state.get("tds_packaging") or _n.get("packaging_size_&_type", _n.get("packaging_size_type", "")) or ""
-            st.session_state["tds_net_weight"] = st.session_state.get("tds_net_weight") or _n.get("net_weight", "") or ""
-            st.session_state["tds_hs_code"] = st.session_state.get("tds_hs_code") or _n.get("hs_code", "") or ""
-            st.session_state["tds_tech_spec"] = st.session_state.get("tds_tech_spec") or _n.get("technical_specification", _n.get("technical_specs", "")) or ""
+            def _get_first(keys: list[str], default: str = ""):
+                for k in keys:
+                    if k in _n and _n.get(k):
+                        return _n.get(k)
+                return default
+            # Store hydrated defaults in a separate dict to avoid widget key conflicts
+            st.session_state["tds_defaults"] = {
+                "generic_product_name": _get_first(["generic_product_name","generic_name","genericproductname"]) or "",
+                "trade_name": _get_first(["trade_name","model_name","tradename","modelname"]) or "",
+                "supplier_name": _get_first(["supplier_name","manufacturer","suppliername"]) or "",
+                "packaging_size_type": _get_first(["packaging_size_type","packaging_size_and_type","packagingsizeandtype","packaging","packaging_size"]) or "",
+                "net_weight": _get_first(["net_weight","netweight","weight"]) or "",
+                "hs_code": _get_first(["hs_code","hscode","hs"]) or "",
+                "technical_specification": _get_first(["technical_specification","technical_specs","technicalspecification","technicalspecs","specification","specifications"]) or "",
+            }
 
         if st.session_state.get("tds_hydrate_pending"):
             _ensure_hydrated()
             st.session_state["tds_hydrate_pending"] = False
         else:
             # Also hydrate opportunistically if fields are empty but we have extracted data
-            if st.session_state.get("extracted_tds_data") and (
-                not st.session_state.get("tds_generic_name")
-                and not st.session_state.get("tds_trade_name")
-                and not st.session_state.get("tds_supplier_name")
-            ):
+            if st.session_state.get("extracted_tds_data") and not st.session_state.get("tds_defaults"):
                 _ensure_hydrated()
 
         col_ai1, col_ai2 = st.columns(2)
         _norm_vals = st.session_state.get("extracted_tds_data_norm") or {}
         
         with col_ai1:
+            _tds_defs = st.session_state.get("tds_defaults") or {}
             generic_product_name = st.text_input(
                 "Generic Product Name",
-                value=st.session_state.get("tds_generic_name") or _norm_vals.get("generic_product_name", ""),
+                value=_tds_defs.get("generic_product_name") or _norm_vals.get("generic_product_name", ""),
                 placeholder="AI extracted generic name",
                 key="tds_generic_name"
             )
             trade_name = st.text_input(
                 "Trade Name (Model Name)", 
-                value=st.session_state.get("tds_trade_name") or _norm_vals.get("trade_name", ""),
+                value=_tds_defs.get("trade_name") or _norm_vals.get("trade_name", ""),
                 placeholder="AI extracted trade/model name",
                 key="tds_trade_name"
             )
             supplier_name = st.text_input(
                 "Supplier Name", 
-                value=st.session_state.get("tds_supplier_name") or _norm_vals.get("supplier_name", ""),
+                value=_tds_defs.get("supplier_name") or _norm_vals.get("supplier_name", ""),
                 placeholder="AI extracted supplier name",
                 key="tds_supplier_name"
             )
             packaging_size_type = st.text_input(
                 "Packaging Size & Type", 
-                value=st.session_state.get("tds_packaging") or _norm_vals.get("packaging_size_&_type", ""),
+                value=_tds_defs.get("packaging_size_type") or _norm_vals.get("packaging_size_&_type", ""),
                 placeholder="AI extracted packaging info",
                 key="tds_packaging"
             )
         with col_ai2:
             net_weight = st.text_input(
                 "Net Weight", 
-                value=st.session_state.get("tds_net_weight") or _norm_vals.get("net_weight", ""),
+                value=_tds_defs.get("net_weight") or _norm_vals.get("net_weight", ""),
                 placeholder="AI extracted weight",
                 key="tds_net_weight"
             )
             hs_code = st.text_input(
                 "HS Code", 
-                value=st.session_state.get("tds_hs_code") or _norm_vals.get("hs_code", ""),
+                value=_tds_defs.get("hs_code") or _norm_vals.get("hs_code", ""),
                 placeholder="AI extracted HS code",
                 key="tds_hs_code"
             )
             technical_spec = st.text_area(
                 "Technical Specification", 
-                value=st.session_state.get("tds_tech_spec") or _norm_vals.get("technical_specification", ""),
+                value=_tds_defs.get("technical_specification") or _norm_vals.get("technical_specification", ""),
                 placeholder="AI extracted technical specifications", 
                 height=100,
                 key="tds_tech_spec"
@@ -1595,6 +1673,33 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                     }
 
                     supabase.table("product_master").insert(payload).execute()
+                    # Also create a sourcing entity row
+                    chem_type_id = _resolve_chemical_type_id(selected_type, category)
+                    brand, grade = _split_brand_grade(trade_name)
+                    # Build specs and metadata
+                    specs = {}
+                    if technical_spec:
+                        specs["technical_spec"] = technical_spec
+                    metadata = {
+                        "generic_product_name": (generic_product_name or None),
+                        "packaging": (packaging_size_type or None),
+                        "net_weight": (net_weight or None),
+                        "hs_code": (hs_code or None),
+                        "tds_file_url": tds_url,
+                        "product_master_id": product_id,
+                    }
+                    owner = tds_source  # Supplier / Customer / Competitor
+                    ok_entity, err_entity = create_tds_sourcing_entity(
+                        chemical_type_id=chem_type_id,
+                        brand=(brand or supplier_name or None),
+                        grade=grade,
+                        owner=owner,
+                        source=tds_source,
+                        specs=specs,
+                        metadata=metadata,
+                    )
+                    if not ok_entity:
+                        st.warning(f"Saved product, but failed to create sourcing entity: {err_entity}")
                     st.success("✅ Record saved successfully")
                 except Exception as e:
                     st.error(f"Failed to save product: {e}")
@@ -1780,6 +1885,16 @@ def analyze_chemical_with_ai(chemical_name: str) -> dict | None:
         def _normalize(data: dict) -> dict:
             import re as _re_norm
             from typing import Any, List, Dict
+            def as_text(value) -> str:
+                if value is None:
+                    return ""
+                if isinstance(value, str):
+                    return value
+                try:
+                    # Prefer JSON for complex types to avoid lossy cast
+                    return _json_glob.dumps(value, ensure_ascii=False)
+                except Exception:
+                    return str(value)
             def parse_int_safe(value) -> int:
                 if value is None:
                     return 0
@@ -1874,8 +1989,8 @@ def analyze_chemical_with_ai(chemical_name: str) -> dict | None:
                         return data_obj.get(key)
                 return None
             normalized = {
-                "generic_name": (data.get("generic_name") or name).strip(),
-                "family": (data.get("family") or "").strip(),
+                "generic_name": as_text(data.get("generic_name") or name).strip(),
+                "family": as_text(data.get("family") or "").strip(),
                 "synonyms": ensure_list(data.get("synonyms")),
                 "cas_ids": ensure_list(data.get("cas_ids")),
                 "hs_codes": normalize_hs_codes(data.get("hs_codes")),
@@ -1885,7 +2000,7 @@ def analyze_chemical_with_ai(chemical_name: str) -> dict | None:
                 "typical_dosage": ensure_list_of_dicts(
                     get_first(data, ["typical_dosage", "typical dosage", "dosage", "usage_range", "usage"]) or data.get("typical_dosage")
                 ),
-                "appearance": (data.get("appearance") or "").strip(),
+                "appearance": as_text(data.get("appearance") or "").strip(),
                 "physical_snapshot": ensure_list_of_dicts(
                     get_first(data, ["physical_snapshot", "physical properties", "physical_properties", "properties", "key_properties"]) or data.get("physical_snapshot")
                 ),
@@ -1893,10 +2008,10 @@ def analyze_chemical_with_ai(chemical_name: str) -> dict | None:
                 "incompatibilities": ensure_list(data.get("incompatibilities")),
                 "sensitivities": ensure_list(data.get("sensitivities")),
                 "shelf_life_months": parse_int_safe(data.get("shelf_life_months")),
-                "storage_conditions": (data.get("storage_conditions") or "").strip(),
+                "storage_conditions": as_text(data.get("storage_conditions") or "").strip(),
                 "packaging_options": ensure_list(data.get("packaging_options")),
-                "summary_80_20": (data.get("summary_80_20") or "").strip(),
-                "summary_technical": (data.get("summary_technical") or "").strip(),
+                "summary_80_20": as_text(data.get("summary_80_20") or "").strip(),
+                "summary_technical": as_text(data.get("summary_technical") or "").strip(),
                 "data_completeness": parse_float_safe(data.get("data_completeness")),
             }
             dc = normalized["data_completeness"]
@@ -2003,6 +2118,8 @@ Required JSON schema keys (arrays can be empty):
                     return None
                 try:
                     txt = (r.text or "").strip()
+                    # Remove code fences to improve downstream parsing
+                    txt = _strip_fences_glob(txt)
                 except Exception:
                     return None
                 return txt if txt else None
@@ -2017,6 +2134,7 @@ Required JSON schema keys (arrays can be empty):
             st.session_state["chem_ai_last_raw"] = raw
         except Exception:
             pass
+        # Try full-text JSON, then embedded JSON object
         data = _parse_lenient_json(raw)
         if not data or not isinstance(data, dict):
             # Strict retry: ask for JSON-only, same keys
@@ -2033,8 +2151,60 @@ Material: "{name}"
                     pass
                 data = _parse_lenient_json(raw_retry)
             if not data or not isinstance(data, dict):
-                st.warning("⚠️ Could not parse AI response as JSON: No JSON object found.")
-                return None
+                # Final fallback: parse key: value lines heuristically
+                def _kv_lines_to_dict(txt: str) -> Dict[str, Any]:
+                    out: Dict[str, Any] = {}
+                    for line in (txt or "").splitlines():
+                        if ":" not in line:
+                            continue
+                        k, v = line.split(":", 1)
+                        k = k.strip().lower()
+                        v = v.strip()
+                        if not k:
+                            continue
+                        out[k] = v
+                    return out
+                parsed = _kv_lines_to_dict(raw or raw_retry or "")
+                if not parsed:
+                    st.warning("⚠️ Could not parse AI response as JSON: No JSON object found.")
+                    # Return minimal object so UI can still proceed
+                    return _normalize({"generic_name": name})
+                # Map common synonyms to our schema before normalize
+                synonym_map = {
+                    "name": "generic_name",
+                    "generic product name": "generic_name",
+                    "generic name": "generic_name",
+                    "trade name": "synonyms",
+                    "applications": "key_applications",
+                    "uses": "key_applications",
+                    "use cases": "key_applications",
+                    "industry": "industry_segments",
+                    "industry segments": "industry_segments",
+                    "functional categories": "functional_categories",
+                    "family": "family",
+                    "appearance": "appearance",
+                    "storage": "storage_conditions",
+                    "storage conditions": "storage_conditions",
+                    "summary": "summary_80_20",
+                    "technical summary": "summary_technical",
+                    "hs code": "hs_codes",
+                    "hs codes": "hs_codes",
+                    "cas": "cas_ids",
+                    "cas ids": "cas_ids",
+                }
+                mapped: Dict[str, Any] = {"generic_name": name}
+                for k, v in parsed.items():
+                    key = synonym_map.get(k, k)
+                    if key in {"synonyms","cas_ids","functional_categories","industry_segments","key_applications","packaging_options","compatibilities","incompatibilities","sensitivities"}:
+                        mapped[key] = [s.strip() for s in v.split(",") if s.strip()]
+                    elif key == "hs_codes":
+                        codes = [s.strip() for s in v.split(",") if s.strip()]
+                        mapped[key] = [{"region": "WCO", "code": c} for c in codes]
+                    elif key == "shelf_life_months":
+                        mapped[key] = v
+                    else:
+                        mapped[key] = v
+                return _normalize(mapped)
         return _normalize(data)
     except Exception as e:
         st.error(f"AI analysis error: {e}")
@@ -2991,6 +3161,15 @@ if st.session_state.get("main_section") == "leanchem":
 # ==========================
 if st.session_state.get("main_section") == "market":
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">Market Master Data</h1>', unsafe_allow_html=True)
+    st.markdown('<div class="form-card">', unsafe_allow_html=True)
+    st.info("🚧 Coming soon")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ==========================
+# UI - Sourcing Master Data (coming soon)
+# ==========================
+if st.session_state.get("main_section") == "sourcing_master" and has_sourcing_master_access(user_email):
+    st.markdown('<h1 style="color:#1976d2; font-weight:700;">Sourcing Master Data</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
     st.info("🚧 Coming soon")
     st.markdown('</div>', unsafe_allow_html=True)
