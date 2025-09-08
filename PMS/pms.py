@@ -1205,17 +1205,52 @@ def extract_tds_info_with_ai(text_content):
         """
         
         response = gemini_model.generate_content(prompt)
-        
-        # Check if response was blocked or failed
-        if not response or hasattr(response, 'finish_reason') and response.finish_reason == 2:
-            st.warning("⚠️ AI response was blocked. This may be due to content filtering.")
-            return None
-        
-        # Try to get response text safely
-        try:
-            raw_text = (response.text or "").strip()
-        except Exception as text_error:
-            st.warning(f"⚠️ Could not extract text from AI response: {text_error}")
+
+        # Robustly extract text from candidates, handling safety blocks
+        def _response_to_text(resp) -> str:
+            try:
+                candidates = getattr(resp, "candidates", None) or []
+                # Prefer first non-blocked candidate with content parts
+                for cand in candidates:
+                    # finish_reason may be enum/int/string; treat 2 or name=="SAFETY" as blocked
+                    fr = getattr(cand, "finish_reason", None)
+                    fr_name = getattr(fr, "name", None)
+                    if str(fr).strip() == "2" or (fr_name and fr_name.upper() == "SAFETY"):
+                        continue
+                    content = getattr(cand, "content", None)
+                    parts = getattr(content, "parts", None) or []
+                    texts = []
+                    for p in parts:
+                        t = getattr(p, "text", None)
+                        if isinstance(t, str):
+                            texts.append(t)
+                    if texts:
+                        return "\n".join(texts).strip()
+                # Fallback to top-level text accessor if available
+                try:
+                    return (getattr(resp, "text", "") or "").strip()
+                except Exception:
+                    return ""
+            except Exception:
+                return ""
+
+        raw_text = _response_to_text(response)
+        if not raw_text:
+            # Retry with a safer, shorter prompt and truncated content to avoid safety blocks
+            safe_text = (text_content or "")[:5000]
+            retry_prompt = f"""
+            You are extracting neutral catalog metadata from a Technical Data Sheet. Respond with JSON only.
+            Text content (truncated):\n{safe_text}
+            Return a single JSON object with keys: ["Generic Product Name","Trade Name","Supplier Name","Packaging Size & Type","Net Weight","HS Code","Technical Specification"].
+            Use empty strings where unknown.
+            """
+            try:
+                retry_resp = gemini_model.generate_content(retry_prompt)
+                raw_text = _response_to_text(retry_resp)
+            except Exception:
+                raw_text = ""
+        if not raw_text:
+            st.warning("⚠️ AI response was blocked or empty. Please try another file or smaller excerpt.")
             return None
         
         # Prefer JSON parsing when possible
@@ -1480,17 +1515,89 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         st.markdown("---")
         st.subheader("Technical Data Sheet (TDS)")
         st.warning("⚠️ TDS upload is required. Products cannot be saved without a TDS file.")
-        uploaded_file = st.file_uploader(
-            "Upload TDS (PDF/DOCX/Images) — max 10MB *",
-            type=ALLOWED_FILE_EXTS
+        # Mobile-friendly upload options
+        upload_mode = st.radio(
+            "Choose upload method",
+            options=["File Picker", "Camera", "URL"],
+            index=0,
+            horizontal=True,
+            key="tds_upload_mode"
         )
 
+        uploaded_file = None
+        camera_file = None
+        url_input = None
+        if upload_mode == "File Picker":
+            uploaded_file = st.file_uploader(
+                "Upload TDS (PDF/DOCX/Images) — max 10MB *",
+                type=ALLOWED_FILE_EXTS,
+                key="tds_file_picker"
+            )
+        elif upload_mode == "Camera":
+            camera_file = st.camera_input("Capture TDS (photo)", key="tds_camera_input")
+        else:
+            url_input = st.text_input("TDS File URL (PDF/DOCX/Image)", placeholder="https://...")
+
+        # Helper: download a file from URL and adapt to UploadedFile-like object
+        def _download_url_as_upload(url: str):
+            try:
+                import requests  # type: ignore
+                r = requests.get(url, timeout=20)
+                if r.status_code != 200:
+                    return None, f"Download failed with status {r.status_code}"
+                content = r.content or b""
+                if not content:
+                    return None, "Downloaded file is empty"
+                # Determine extension from URL or content-type
+                ext = None
+                # Try URL extension
+                try:
+                    from urllib.parse import urlparse
+                    path = urlparse(url).path
+                    if "." in path:
+                        ext = path.split(".")[-1].lower()
+                except Exception:
+                    ext = None
+                if not ext:
+                    ctype = r.headers.get("Content-Type", "").lower()
+                    mapping = {
+                        "application/pdf": "pdf",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+                        "application/msword": "doc",
+                        "image/png": "png",
+                        "image/jpeg": "jpg",
+                    }
+                    ext = mapping.get(ctype, None)
+                if ext not in ALLOWED_FILE_EXTS:
+                    return None, f"Unsupported or unknown file type from URL. Allowed: {', '.join(ALLOWED_FILE_EXTS)}"
+                # Build an object with .name, .size, .getvalue()
+                class _UrlUploaded:
+                    def __init__(self, name: str, data: bytes):
+                        self.name = name
+                        self._data = data
+                        self.size = len(data)
+                    def getvalue(self):
+                        return self._data
+                filename = f"downloaded.{ext}"
+                return _UrlUploaded(filename, content), None
+            except Exception as e:
+                return None, str(e)
+
         # AI Processing Button
-        if uploaded_file and gemini_model:
+        # Determine a single file-like object for downstream
+        effective_file = uploaded_file or camera_file
+        if (not effective_file) and url_input:
+            url_obj, url_err = _download_url_as_upload(url_input)
+            if url_err:
+                st.error(f"URL error: {url_err}")
+            else:
+                effective_file = url_obj
+
+        if effective_file and gemini_model:
             col_ai_process1, col_ai_process2 = st.columns([1, 3])
             with col_ai_process1:
                 if st.button("🤖 Extract with AI", type="secondary"):
-                    extracted_data = process_tds_with_ai(uploaded_file)
+                    extracted_data = process_tds_with_ai(effective_file)
                     if extracted_data:
                         # Normalize keys robustly (case/space/punctuation variations)
                         import re as _re_norm_keys
@@ -1555,7 +1662,17 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                 "generic_product_name": _get_first(["generic_product_name","generic_name","genericproductname"]) or "",
                 "trade_name": _get_first(["trade_name","model_name","tradename","modelname"]) or "",
                 "supplier_name": _get_first(["supplier_name","manufacturer","suppliername"]) or "",
-                "packaging_size_type": _get_first(["packaging_size_type","packaging_size_and_type","packagingsizeandtype","packaging","packaging_size"]) or "",
+                # Include common normalized variants including double-underscore from " & " replacement
+                "packaging_size_type": _get_first([
+                    "packaging_size_type",
+                    "packaging_size_and_type",
+                    "packagingsizeandtype",
+                    "packaging_size__and__type",
+                    "packaging_sizeandtype",
+                    "packaging_and_type",
+                    "packaging",
+                    "packaging_size"
+                ]) or "",
                 "net_weight": _get_first(["net_weight","netweight","weight"]) or "",
                 "hs_code": _get_first(["hs_code","hscode","hs"]) or "",
                 "technical_specification": _get_first(["technical_specification","technical_specs","technicalspecification","technicalspecs","specification","specifications"]) or "",
@@ -1592,9 +1709,25 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                 placeholder="AI extracted supplier name",
                 key="tds_supplier_name"
             )
+            # Resolve value from defaults or normalized key variants
+            _pkg_val = _tds_defs.get("packaging_size_type")
+            if not _pkg_val:
+                for _k in [
+                    "packaging_size_type",
+                    "packaging_size_and_type",
+                    "packagingsizeandtype",
+                    "packaging_size__and__type",
+                    "packaging_sizeandtype",
+                    "packaging_and_type",
+                    "packaging",
+                    "packaging_size",
+                ]:
+                    if _norm_vals.get(_k):
+                        _pkg_val = _norm_vals.get(_k)
+                        break
             packaging_size_type = st.text_input(
                 "Packaging Size & Type", 
-                value=_tds_defs.get("packaging_size_type") or _norm_vals.get("packaging_size_&_type", ""),
+                value=_pkg_val or "",
                 placeholder="AI extracted packaging info",
                 key="tds_packaging"
             )
@@ -1634,11 +1767,18 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             st.error("A product with this name already exists")
         elif not selected_type:
             st.error("Product Type is required. Select a type or enter a new one.")
-        elif not uploaded_file:
-            st.error("TDS file is required. Please upload a TDS file before saving the product.")
+        elif not (uploaded_file or camera_file or (url_input and url_input.strip())):
+            st.error("TDS file is required. Please upload, capture, or provide a URL before saving the product.")
         else:
             # Validate file
-            f_ok, f_msg = validate_file(uploaded_file)
+            # Choose source precedence: file picker > camera > URL
+            source_file = uploaded_file or camera_file
+            if (not source_file) and url_input:
+                source_file, url_err = _download_url_as_upload(url_input)
+                if url_err:
+                    st.error(f"URL error: {url_err}")
+                    st.stop()
+            f_ok, f_msg = validate_file(source_file)
             if not f_ok:
                 st.error(f_msg)
             else:
@@ -1647,7 +1787,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                     product_id = str(uuid.uuid4())
 
                     # Upload TDS if provided
-                    tds_url, tds_name, tds_size, tds_type = upload_tds_to_supabase(uploaded_file, product_id)
+                    tds_url, tds_name, tds_size, tds_type = upload_tds_to_supabase(source_file, product_id)
 
                     # Insert product
                     payload = {
