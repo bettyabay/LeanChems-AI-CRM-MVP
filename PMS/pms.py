@@ -262,16 +262,19 @@ h2 {
     backdrop-filter: blur(15px);
     padding: 1.5rem;
     border-radius: 16px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
     margin: 0.75rem 0;
     border: 1px solid rgba(147, 197, 253, 0.15);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     width: 100%;
 }
 
+/* Hide empty form-card elements */
+.form-card:empty {
+    display: none;
+}
+
 .feature-box:hover, .form-card:hover {
     transform: translateY(-4px);
-    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
 }
 
 /* Expander Styling */
@@ -574,78 +577,7 @@ def _render_login_screen():
     """.format(_get_logo_base64()), unsafe_allow_html=True)
     
     # Auth forms
-    mode = st.session_state.get("auth_mode", "login")
-    if mode == "login":
-        with st.form("login_form_full", clear_on_submit=False):
-            email = st.text_input("📧 Email Address", placeholder="you@example.com", help="Enter your registered email address")
-            password = st.text_input("🔐 Password", type="password", placeholder="Enter your password", help="Enter your account password")
-            
-            # Center the button without using columns
-            st.markdown('<div style="text-align: center; margin-top: 1rem;">', unsafe_allow_html=True)
-            submit = st.form_submit_button("🚀 Sign In", use_container_width=False, type="primary")
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        # Switch to signup
-        if st.button("Create an account", type="secondary"):
-            st.session_state["auth_mode"] = "signup"
-            st.rerun()
-
-        if submit:
-            email_s = _sanitize_email(email)
-            if not email_s or not password:
-                st.error("🚫 Please enter both email and password")
-            elif not _is_valid_email(email_s):
-                st.error("🚫 Please enter a valid email address")
-            else:
-                with st.spinner("🔐 Authenticating..."):
-                    try:
-                        resp = supabase.auth.sign_in_with_password({"email": email_s, "password": password})
-                        if resp and getattr(resp, "user", None) and getattr(resp, "session", None):
-                            # Enforce email verification before granting access
-                            try:
-                                email_confirmed_at = getattr(resp.user, "email_confirmed_at", None)
-                            except Exception:
-                                email_confirmed_at = None
-                            if not email_confirmed_at:
-                                try:
-                                    # Proactively resend verification email
-                                    if EMAIL_REDIRECT_URL:
-                                        supabase.auth.resend({
-                                            "type": "signup",
-                                            "email": email_s,
-                                            "options": {"email_redirect_to": EMAIL_REDIRECT_URL}
-                                        })
-                                    else:
-                                        supabase.auth.resend({
-                                            "type": "signup",
-                                            "email": email_s,
-                                        })
-                                except Exception:
-                                    pass
-                                st.session_state["pending_verify_email"] = email_s
-                                st.warning("📧 Please verify your email first. We've sent you a new verification link. Check your inbox/spam, then sign in.")
-                                try:
-                                    supabase.auth.sign_out()
-                                except Exception:
-                                    pass
-                                st.stop()
-                            user_role = ((resp.user.user_metadata or {}).get("role") if hasattr(resp.user, "user_metadata") else None) or "viewer"
-                            st.session_state["sb_user"] = {
-                                "id": resp.user.id,
-                                "email": resp.user.email,
-                                "role": user_role,
-                            }
-                            st.session_state["sb_session"] = {
-                                "access_token": resp.session.access_token,
-                                "refresh_token": resp.session.refresh_token,
-                            }
-                            st.success("✅ Login successful! Redirecting...")
-                            st.rerun()
-                        else:
-                            st.error("❌ Invalid login response")
-                    except Exception as e:
-                        st.error(f"❌ Login failed: {e}")
-    else:
+    if st.session_state.get("auth_mode") == "signup":
         # Signup form
         with st.form("signup_form_full", clear_on_submit=False):
             su_email = st.text_input("📧 Email Address", placeholder="you@example.com")
@@ -698,27 +630,64 @@ def _render_login_screen():
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ Sign up failed: {e}")
-
-        # Offer to resend verification email when returning to login after signup
-        if st.session_state.get("pending_verify_email"):
-            pending_email = _sanitize_email(st.session_state.get("pending_verify_email"))
-            st.caption(f"A verification email was sent to {pending_email}. Not received?")
-            if st.button("Resend verification email", type="secondary"):
-                try:
-                    if EMAIL_REDIRECT_URL:
-                        supabase.auth.resend({
-                            "type": "signup",
-                            "email": pending_email,
-                            "options": {"email_redirect_to": EMAIL_REDIRECT_URL}
+    else:
+        # Default: Show login form
+        with st.form("login_form_full", clear_on_submit=False):
+            email = st.text_input("📧 Email Address", placeholder="you@example.com")
+            password = st.text_input("🔐 Password", type="password", placeholder="Enter your password")
+            st.markdown('<div style="text-align: center; margin-top: 1rem;">', unsafe_allow_html=True)
+            submit = st.form_submit_button("🚀 Sign In", use_container_width=False, type="primary")
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        # Switch to signup
+        if st.button("Create an account", type="secondary"):
+            st.session_state["auth_mode"] = "signup"
+            st.rerun()
+        
+        if submit:
+            email_s = _sanitize_email(email)
+            if not email_s or not password:
+                st.error("🚫 Please enter both email and password")
+            elif not _is_valid_email(email_s):
+                st.error("🚫 Please enter a valid email address")
+            else:
+                with st.spinner("🔐 Authenticating..."):
+                    try:
+                        resp = supabase.auth.sign_in_with_password({
+                            "email": email_s,
+                            "password": password
                         })
-                    else:
-                        supabase.auth.resend({
-                            "type": "signup",
-                            "email": pending_email,
-                        })
-                    st.success("✅ Verification email resent.")
-                except Exception as e:
-                    st.error(f"❌ Failed to resend verification email: {e}")
+                        if resp and resp.user:
+                            st.session_state["authenticated"] = True
+                            st.session_state["user_email"] = email_s
+                            st.session_state["user_name"] = resp.user.user_metadata.get("name", email_s.split("@")[0])
+                            st.success("✅ Login successful!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Invalid login response")
+                    except Exception as e:
+                        st.error(f"❌ Login failed: {e}")
+    
+    # Offer to resend verification email when returning to login after signup
+    if st.session_state.get("pending_verify_email"):
+        pending_email = _sanitize_email(st.session_state.get("pending_verify_email"))
+        st.caption(f"A verification email was sent to {pending_email}. Not received?")
+        if st.button("Resend verification email", type="secondary"):
+            try:
+                if EMAIL_REDIRECT_URL:
+                    supabase.auth.resend({
+                        "type": "signup",
+                        "email": pending_email,
+                        "options": {"email_redirect_to": EMAIL_REDIRECT_URL}
+                    })
+                else:
+                    supabase.auth.resend({
+                        "type": "signup",
+                        "email": pending_email,
+                    })
+                st.success("✅ Verification email resent.")
+            except Exception as e:
+                st.error(f"❌ Failed to resend verification email: {e}")
     
     # System description with three key points
     st.markdown("""
@@ -1015,6 +984,7 @@ CHEM_VIEW_DETAIL_FIELDS: list[tuple[str, str]] = [
     ("family", "Family"),
     ("synonyms", "Synonyms"),
     ("cas_ids", "CAS IDs"),
+    ("hs_codes", "HS Codes"),
     ("industry_segments", "Industry Segments"),
     ("functional_categories", "Functional Categories"),
     ("key_applications", "Key Applications"),
@@ -1042,6 +1012,52 @@ def _format_chem_field(value):
                 return "-"
             if all(not isinstance(v, (dict, list)) for v in value):
                 return ", ".join(str(v) for v in value if str(v).strip()) or "-"
+            # Humanize common list-of-dict shapes
+            try:
+                # hs_codes: [{"region":..., "code":...}]
+                if all(isinstance(v, dict) and ("code" in v) for v in value):
+                    parts = []
+                    for v in value:
+                        code = str(v.get("code") or "").strip()
+                        region = str(v.get("region") or "").strip()
+                        if code and region:
+                            parts.append(f"{code} ({region})")
+                        elif code:
+                            parts.append(code)
+                    return ", ".join(parts) if parts else "-"
+                # typical_dosage: [{"application":..., "range":...}]
+                if all(isinstance(v, dict) and ("application" in v or "range" in v) for v in value):
+                    lines = []
+                    for v in value:
+                        app = str(v.get("application") or "").strip()
+                        rng = str(v.get("range") or "").strip()
+                        if app and rng:
+                            lines.append(f"{app}: {rng}")
+                        elif app:
+                            lines.append(app)
+                        elif rng:
+                            lines.append(rng)
+                    return "; ".join(lines) if lines else "-"
+                # physical_snapshot: [{"name":..., "value":..., "unit":..., "method":...}]
+                if all(isinstance(v, dict) and ("name" in v or "value" in v) for v in value):
+                    lines = []
+                    for v in value:
+                        name = str(v.get("name") or "").strip()
+                        val = str(v.get("value") or "").strip()
+                        unit = str(v.get("unit") or "").strip()
+                        method = str(v.get("method") or "").strip()
+                        s = name
+                        if val and unit:
+                            s = f"{name}: {val} {unit}" if name else f"{val} {unit}"
+                        elif val:
+                            s = f"{name}: {val}" if name else val
+                        if method:
+                            s = f"{s} ({method})" if s else f"({method})"
+                        if s:
+                            lines.append(s)
+                    return "; ".join(lines) if lines else "-"
+            except Exception:
+                pass
             # Fallback to JSON for complex lists
             import json as _json_v
             return _json_v.dumps(value, ensure_ascii=False)
@@ -1123,8 +1139,8 @@ def validate_file(uploaded_file) -> tuple[bool, str]:
 
 def get_distinct_product_types() -> list[str]:
     try:
-        res = supabase.table("product_master").select("product_type").execute()
-        values = sorted({(row.get("product_type") or "").strip() for row in (res.data or []) if row.get("product_type")})
+        res = supabase.table("chemical_types").select("name").execute()
+        values = sorted({(row.get("name") or "").strip() for row in (res.data or []) if row.get("name")})
         return [v for v in values if v]
     except Exception:
         return []
@@ -1218,7 +1234,7 @@ def upload_tds_to_supabase(uploaded_file, product_id: str):
     return public_url, uploaded_file.name, uploaded_file.size, ext.upper()
 
 def name_exists(name: str) -> bool:
-    res = supabase.table("product_master").select("id").eq("name", name.strip()).limit(1).execute()
+    res = supabase.table("chemical_types").select("id").eq("name", name.strip()).limit(1).execute()
     return bool(res.data)
 
 def _resolve_chemical_type_id(type_name: str, category: str) -> str | None:
@@ -1318,7 +1334,6 @@ def extract_tds_info_with_ai(text_content):
         - Supplier Name: [extract supplier or manufacturer name]
         - Packaging Size & Type: [extract packaging information]
         - Net Weight: [extract net weight]
-        - HS Code: [extract HS code if available]
         - Technical Specification: [extract key technical specifications]
 
         Format your response exactly like this example:
@@ -1332,7 +1347,7 @@ def extract_tds_info_with_ai(text_content):
         """
         
         response = gemini_model.generate_content(prompt)
-
+        
         # Robustly extract text from candidates, handling safety blocks
         def _response_to_text(resp) -> str:
             try:
@@ -1544,7 +1559,7 @@ if st.session_state.get("main_section") == "sourcing" and has_sourcing_master_ac
     st.markdown('<div class="form-card" style="margin: 2rem 0;">', unsafe_allow_html=True)
     st.markdown('''
     <div style="text-align: center; margin-bottom: 1.5rem;">
-        <h3 style="color: #4a5568; font-weight: 600; margin-bottom: 0.5rem;">📋 Sourcing Master Data</h3>
+        <h3 style="color: #4a5568; font-weight: 600; margin-bottom: 0.5rem;">TDS Master Data</h3>
         <p style="color: #718096; font-size: 0.9rem; margin: 0;">Technical Data Sheet Management</p>
     </div>
     ''', unsafe_allow_html=True)
@@ -1800,12 +1815,8 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                 placeholder="AI extracted weight",
                 key="tds_net_weight"
             )
-            hs_code = st.text_input(
-                "HS Code", 
-                value=_tds_defs.get("hs_code") or _norm_vals.get("hs_code", ""),
-                placeholder="AI extracted HS code",
-                key="tds_hs_code"
-            )
+            # HS Code input removed; use AI-extracted/default value silently
+            hs_code = _tds_defs.get("hs_code") or _norm_vals.get("hs_code", "")
             technical_spec = st.text_area(
                 "Technical Specification", 
                 value=_tds_defs.get("technical_specification") or _norm_vals.get("technical_specification", ""),
@@ -1845,58 +1856,93 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                     # Upload TDS if provided
                     tds_url, tds_name, tds_size, tds_type = upload_tds_to_supabase(source_file, product_id)
 
-                    # Insert product
-                    payload = {
+                    # Save everything to tds_data table only
+                    # First, find or create the chemical type
+                    try:
+                        # Try to find existing chemical type
+                        existing_type = supabase.table("chemical_types").select("id").eq("name", selected_type.strip()).eq("category", category).limit(1).execute()
+                        if existing_type.data:
+                            chem_type_id = existing_type.data[0]["id"]
+                        else:
+                            # Create new chemical type if it doesn't exist
+                            new_type_payload = {
                         "id": product_id,
-                        "name": name.strip(),
+                                "name": selected_type.strip(),
                         "category": category,
+                            }
+                            supabase.table("chemical_types").insert(new_type_payload).execute()
+                            chem_type_id = product_id
+                    except Exception as e:
+                        st.error(f"Failed to handle chemical type: {e}")
+                        st.stop()
+                    brand, grade = _split_brand_grade(trade_name)
+                    
+                    # Build specs (actual technical specifications from TDS)
+                    specs = {}
+                    if technical_spec:
+                        specs["technical_specification"] = technical_spec
+                    if hs_code:
+                        specs["hs_code"] = hs_code
+                    if net_weight:
+                        specs["net_weight"] = net_weight
+                    
+                    # Build metadata (ALL TDS information goes here)
+                    metadata = {
+                        # Product info
+                        "product_name": name.strip(),
                         "product_type": selected_type.strip(),
-                        "description": (description or None),
+                        "category": category,
+                        "is_leanchems_product": is_leanchems_product,
+                        "is_active": True,
+                        # TDS extracted info
+                        "generic_product_name": (generic_product_name or None),
+                        "trade_name": (trade_name or None),
+                        "supplier_name": (supplier_name or None),
+                        "packaging_size_type": (packaging_size_type or None),
+                        # TDS file info
                         "tds_file_url": tds_url,
                         "tds_file_name": tds_name,
                         "tds_file_size": tds_size,
                         "tds_file_type": tds_type,
                         "tds_source": tds_source,
-                        "is_leanchems_product": is_leanchems_product,
-                        "generic_product_name": (generic_product_name or "").strip() or None,
-                        "trade_name": (trade_name or "").strip() or None,
-                        "supplier_name": (supplier_name or "").strip() or None,
-                        "packaging_size_type": (packaging_size_type or "").strip() or None,
-                        "net_weight": (net_weight or "").strip() or None,
-                        "hs_code": (hs_code or "").strip() or None,
-                        "technical_spec": (technical_spec or "").strip() or None,
-                        "is_active": True,
                     }
-
-                    supabase.table("product_master").insert(payload).execute()
-                    # Also create a sourcing entity row
-                    chem_type_id = _resolve_chemical_type_id(selected_type, category)
-                    brand, grade = _split_brand_grade(trade_name)
-                    # Build specs and metadata
-                    specs = {}
-                    if technical_spec:
-                        specs["technical_spec"] = technical_spec
-                    metadata = {
-                        "generic_product_name": (generic_product_name or None),
-                        "packaging": (packaging_size_type or None),
-                        "net_weight": (net_weight or None),
-                        "hs_code": (hs_code or None),
-                        "tds_file_url": tds_url,
-                        "product_master_id": product_id,
-                    }
-                    owner = tds_source  # Supplier / Customer / Competitor
+                    
+                    # Create tds_data entry
                     ok_entity, err_entity = create_tds_sourcing_entity(
                         chemical_type_id=chem_type_id,
                         brand=(brand or supplier_name or None),
                         grade=grade,
-                        owner=owner,
-                        source=tds_source,
+                        owner=tds_source,  # Supplier / Customer / Competitor
+                        source="TDS Upload",  # Where it came from
                         specs=specs,
                         metadata=metadata,
                     )
                     if not ok_entity:
                         st.warning(f"Saved product, but failed to create sourcing entity: {err_entity}")
                     st.success("✅ Record saved successfully")
+                    # Clear Add TDS session artifacts and redirect to Manage TDS
+                    try:
+                        for k in [
+                            "extracted_tds_data",
+                            "extracted_tds_data_norm",
+                            "tds_defaults",
+                            "tds_hydrate_pending",
+                            "tds_file_picker",
+                            "category_select_prev",
+                        ]:
+                            st.session_state.pop(k, None)
+                        # Also clear dynamic type select key for previous category if exists
+                        try:
+                            _cat = category or st.session_state.get("category_select_prev") or ""
+                            if _cat:
+                                _key_base = (_cat or 'none').replace(' ', '_').replace('&', 'and')
+                                st.session_state.pop(f"type_select_{_key_base}", None)
+                        except Exception:
+                            pass
+                        st.session_state["sourcing_section"] = "manage"
+                    except Exception:
+                        pass
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Failed to save product: {e}")
 
@@ -1943,6 +1989,9 @@ def _map_type_record_to_legacy(rec: dict) -> dict:
             **rec,
             # legacy keys synthesized from new schema
             "generic_name": rec.get("name"),
+            "family": meta.get("family"),
+            "synonyms": meta.get("synonyms") or [],
+            "cas_ids": meta.get("cas_ids") or [],
             "key_applications": rec.get("applications") or [],
             "typical_dosage": spec.get("typical_dosage") or [],
             "physical_snapshot": spec.get("physical_snapshot") or [],
@@ -1958,8 +2007,9 @@ def _map_type_record_to_legacy(rec: dict) -> dict:
             "summary_80_20": meta.get("summary_80_20"),
             "summary_technical": meta.get("summary_technical"),
             "data_completeness": meta.get("data_completeness", rec.get("data_completeness")),
-            # hs_codes legacy list can live in metadata (keep if present)
-            "hs_codes": meta.get("hs_codes") or [],
+            # hs_codes: prefer metadata; else derive from core hs_code column if present
+            "hs_codes": (meta.get("hs_codes") or ([{"region": "WCO", "code": rec.get("hs_code")}]
+                           if rec.get("hs_code") else [])),
         }
         return out
     except Exception:
@@ -2223,19 +2273,30 @@ def analyze_chemical_with_ai(chemical_name: str) -> dict | None:
                 groq_schema_prompt = f"""
 You are assisting with business-safe catalog metadata for a material. Respond with valid JSON only.
 Material: "{name}"
+
+IMPORTANT: Pay special attention to these key fields:
+- cas_ids: Extract CAS registry numbers (format XXX-XX-X or XXXXXXX-XX-X). Common examples:
+  * Sodium Chloride: 7647-14-5
+  * Acetic Acid: 64-19-7
+  * Ethanol: 64-17-5
+  * Water: 7732-18-5
+  * Sulfuric Acid: 7664-93-9
+- physical_snapshot: Extract measurable physical properties like density, melting point, boiling point, viscosity, pH, etc.
+- typical_dosage: Extract typical usage amounts, concentrations, or application rates
+
 Required JSON schema keys (arrays can be empty):
 {{
   "generic_name": string,
   "family": string,
   "synonyms": array,
-  "cas_ids": array,
+  "cas_ids": array, // CAS registry numbers in format XXX-XX-X - MUST include if known
   "hs_codes": array,  // of objects like {{"region":"WCO","code":"HS"}}
   "functional_categories": array,
   "industry_segments": array,
   "key_applications": array,
-  "typical_dosage": array, // of objects like {{"application":"","range":""}}
+  "typical_dosage": array, // of objects like {{"application":"use case","range":"concentration or amount"}}
   "appearance": string,
-  "physical_snapshot": array, // of objects like {{"name":"","value":"","unit":"","method":""}}
+  "physical_snapshot": array, // of objects like {{"name":"property name","value":"numerical value","unit":"unit","method":"test method"}}
   "compatibilities": array,
   "incompatibilities": array,
   "sensitivities": array,
@@ -2280,19 +2341,29 @@ Required JSON schema keys (arrays can be empty):
  
  Material: "{name}"
  
+ IMPORTANT: Pay special attention to extracting these key fields:
+ - cas_ids: Look for CAS registry numbers (format: XXX-XX-X or XXXXXXX-XX-X). Common examples:
+   * Sodium Chloride: 7647-14-5
+   * Acetic Acid: 64-19-7
+   * Ethanol: 64-17-5
+   * Water: 7732-18-5
+   * Sulfuric Acid: 7664-93-9
+ - physical_snapshot: Extract measurable physical properties like density, melting point, boiling point, viscosity, pH, etc.
+ - typical_dosage: Extract typical usage amounts, concentrations, or application rates
+ 
  Schema:
  {{
    "generic_name": "{name}",
    "family": "material type",
    "synonyms": ["alternative names"],
-   "cas_ids": ["CAS numbers"],
+   "cas_ids": ["CAS numbers - look for format XXX-XX-X - MUST include if known"],
    "hs_codes": [{{"region": "WCO", "code": "HS code"}}],
    "functional_categories": ["primary functions"],
    "industry_segments": ["main industries"],
    "key_applications": ["primary uses"],
-   "typical_dosage": [{{"application": "use case", "range": "broad % range"}}],
+   "typical_dosage": [{{"application": "use case", "range": "concentration or amount range"}}],
    "appearance": "brief physical description",
-   "physical_snapshot": [{{"name": "property", "value": "value", "unit": "unit", "method": "method"}}],
+   "physical_snapshot": [{{"name": "property name", "value": "numerical value", "unit": "unit of measurement", "method": "test method if known"}}],
    "compatibilities": ["compatible systems"],
    "incompatibilities": ["incompatible systems"],
    "sensitivities": ["environmental factors"],
@@ -2336,6 +2407,12 @@ Required JSON schema keys (arrays can be empty):
             # Strict retry: ask for JSON-only, same keys
             prompt_retry = f"""
 Return a single valid JSON object only. No prose, no code fences. Use empty strings or empty arrays where unknown.
+
+IMPORTANT: Focus on extracting:
+- cas_ids: CAS registry numbers (format XXX-XX-X). Examples: Sodium Chloride: 7647-14-5, Acetic Acid: 64-19-7, Ethanol: 64-17-5
+- physical_snapshot: Physical properties with name, value, unit, method
+- typical_dosage: Usage amounts/concentrations with application and range
+
 Keys: ["generic_name","family","synonyms","cas_ids","hs_codes","functional_categories","industry_segments","key_applications","typical_dosage","appearance","physical_snapshot","compatibilities","incompatibilities","sensitivities","shelf_life_months","storage_conditions","packaging_options","summary_80_20","summary_technical","data_completeness"].
 Material: "{name}"
 """
@@ -2410,17 +2487,26 @@ Material: "{name}"
 # Helpers for Manage
 def fetch_products():
     try:
-        res = supabase.table("product_master").select("*").order("category").order("product_type").order("name").execute()
+        res = supabase.table("chemical_types").select("*").order("category").order("name").execute()
         return res.data or []
     except Exception as e:
         st.error(f"Failed to fetch products: {e}")
         return []
 
+def fetch_tds_data():
+    """Fetch TDS data from tds_data table"""
+    try:
+        res = supabase.table("tds_data").select("*").order("created_at", desc=True).execute()
+        return res.data or []
+    except Exception as e:
+        st.error(f"Failed to fetch TDS data: {e}")
+        return []
+
 def update_product(product_id: str, updates: dict):
-    return supabase.table("product_master").update(updates).eq("id", product_id).execute()
+    return supabase.table("chemical_types").update(updates).eq("id", product_id).execute()
 
 def name_exists_other(name: str, current_id: str) -> bool:
-    res = supabase.table("product_master").select("id").eq("name", name.strip()).neq("id", current_id).limit(1).execute()
+    res = supabase.table("chemical_types").select("id").eq("name", name.strip()).neq("id", current_id).limit(1).execute()
     return bool(res.data)
 
 
@@ -2450,107 +2536,124 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         st.error("You do not have permission to access Manage Products.")
     else:
         # Enhanced Filters
-        st.subheader("📊 Filter Products")
+        st.subheader("📊 Filter TDS Records")
         colf1, colf2, colf3, colf4 = st.columns([2, 2, 2, 1])
         with colf1:
             filter_category = st.selectbox("Filter by Category", ["All"] + FIXED_CATEGORIES)
         with colf2:
-            # Product Type Filter
-            all_product_types = []
+            # Brand Filter
+            all_brands = []
             try:
-                res = supabase.table("product_master").select("product_type").execute()
-                all_product_types = sorted(list(set([row.get("product_type") for row in (res.data or []) if row.get("product_type")])))
+                res = supabase.table("tds_data").select("brand").execute()
+                all_brands = sorted(list(set([row.get("brand") for row in (res.data or []) if row.get("brand")])))
             except Exception:
                 pass
-            filter_product_type = st.selectbox("Filter by Product Type", ["All"] + all_product_types)
+            filter_brand = st.selectbox("Filter by Brand", ["All"] + all_brands)
         with colf3:
-            # LeanChems Product Filter
-            filter_leanchems = st.selectbox("Leanchems Chemicals", ["All", "Yes", "No"])
+            # Owner Filter
+            filter_owner = st.selectbox("Filter by Owner", ["All", "Supplier", "Customer", "Competitor"])
         with colf4:
-            # TDS Filter
-            filter_tds = st.selectbox("TDS Status", ["All", "With TDS", "Without TDS"])
+            # Source Filter
+            filter_source = st.selectbox("Filter by Source", ["All", "TDS Upload", "Import Data", "Brochure"])
 
         # Search filter
-        search = st.text_input("Search by name/type", placeholder="Start typing...")
+        search = st.text_input("Search by product name/brand/supplier", placeholder="Start typing...")
 
-        products = fetch_products()
+        tds_records = fetch_tds_data()
         # Apply enhanced filters
         filtered = []
-        for p in products:
+        for tds in tds_records:
+            metadata = tds.get("metadata", {})
             # Category filter
-            if filter_category != "All" and p.get("category") != filter_category:
+            if filter_category != "All" and metadata.get("category") != filter_category:
                 continue
-            # Product type filter
-            if filter_product_type != "All" and p.get("product_type") != filter_product_type:
+            # Brand filter
+            if filter_brand != "All" and tds.get("brand") != filter_brand:
                 continue
-            # LeanChems filter
-            if filter_leanchems != "All":
-                is_leanchems = p.get("is_leanchems_product", "No")
-                if filter_leanchems != is_leanchems:
+            # Owner filter
+            if filter_owner != "All" and tds.get("owner") != filter_owner:
                     continue
-            # TDS filter
-            if filter_tds == "With TDS" and not p.get("tds_file_url"):
-                continue
-            if filter_tds == "Without TDS" and p.get("tds_file_url"):
+            # Source filter
+            if filter_source != "All" and tds.get("source") != filter_source:
                 continue
             # Search filter
             if search:
-                if search.lower() not in (p.get("name", "").lower()) and \
-                   search.lower() not in (p.get("product_type", "").lower()):
+                search_text = " ".join([
+                    metadata.get("product_name", ""),
+                    tds.get("brand", ""),
+                    metadata.get("supplier_name", ""),
+                    metadata.get("generic_product_name", "")
+                ]).lower()
+                if search.lower() not in search_text:
                     continue
-            filtered.append(p)
+            filtered.append(tds)
 
         # Display filter summary
         if filtered:
-            st.success(f"📋 Found {len(filtered)} products matching your filters")
+            st.success(f"📋 Found {len(filtered)} TDS records matching your filters")
         else:
-            st.info("No products match the current filters.")
+            st.info("No TDS records match the current filters.")
 
         if not filtered:
-            st.info("No products match the current filters.")
+            st.info("No TDS records match the current filters.")
         else:
-            # Group by category then type
+            # Group by category then brand
             by_cat = {}
-            for p in filtered:
-                by_cat.setdefault(p["category"], {}).setdefault(p["product_type"], []).append(p)
+            for tds in filtered:
+                metadata = tds.get("metadata", {})
+                category = metadata.get("category", "Unknown")
+                brand = tds.get("brand", "Unknown")
+                by_cat.setdefault(category, {}).setdefault(brand, []).append(tds)
 
-            for cat, types in by_cat.items():
+            for cat, brands in by_cat.items():
                 with st.expander(f"📁 {cat}", expanded=True):
-                    for t, items in types.items():
-                        st.markdown(f"**🔬 {t}** ({len(items)})")
-                        for prod in items:
-                            pid = prod["id"]
+                    for brand, items in brands.items():
+                        st.markdown(f"**🏷️ {brand}** ({len(items)})")
+                        for tds in items:
+                            tid = tds["id"]
+                            metadata = tds.get("metadata", {})
                             cols = st.columns([3, 2, 2, 2])
                             with cols[0]:
-                                st.write(f"• {prod.get('name')}")
-                                # Show LeanChems status
-                                leanchems_status = prod.get("is_leanchems_product", "No")
-                                if leanchems_status == "Yes":
-                                    st.caption("🏢 Leanchems Product")
+                                st.write(f"• {metadata.get('product_name', 'Unknown Product')}")
+                                st.caption(f"Generic: {metadata.get('generic_product_name', 'N/A')}")
+                                st.caption(f"Supplier: {metadata.get('supplier_name', 'N/A')}")
                             with cols[1]:
-                                st.write("TDS: "+ ("✅" if prod.get("tds_file_url") else "❌"))
+                                st.write(f"Owner: {tds.get('owner', 'N/A')}")
+                                st.write(f"Source: {tds.get('source', 'N/A')}")
                             with cols[2]:
-                                if prod.get("tds_file_url"):
-                                    st.markdown(f"[Download TDS]({prod.get('tds_file_url')})")
+                                tds_url = metadata.get("tds_file_url")
+                                if tds_url:
+                                    st.markdown(f"[📄 Download TDS]({tds_url})")
+                                else:
+                                    st.write("No TDS file")
                             with cols[3]:
-                                if st.button("✏️ Edit", key=f"edit_{pid}"):
-                                    st.session_state[f"editing_{pid}"] = True
+                                if st.button("✏️ Edit", key=f"edit_{tid}"):
+                                    st.session_state[f"editing_{tid}"] = True
 
-                            if st.session_state.get(f"editing_{pid}"):
-                                with st.expander(f"Edit: {prod.get('name')}", expanded=True):
-                                    # Editable fields
-                                    ename = st.text_input("Name", value=prod.get("name", ""), key=f"n_{pid}")
-                                    ecat = st.selectbox("Category", FIXED_CATEGORIES, index=FIXED_CATEGORIES.index(prod.get("category")), key=f"c_{pid}")
-                                    # product type: choose existing or new free text
-                                    etype = st.text_input("Product Type", value=prod.get("product_type", ""), key=f"t_{pid}")
-                                    edesc = st.text_area("Description", value=prod.get("description") or "", key=f"d_{pid}")
+                            if st.session_state.get(f"editing_{tid}"):
+                                with st.expander(f"Edit: {metadata.get('product_name', 'Unknown Product')}", expanded=True):
+                                    # Editable fields for TDS data
+                                    ename = st.text_input("Product Name", value=metadata.get("product_name", ""), key=f"n_{tid}")
+                                    ecat = st.selectbox("Category", FIXED_CATEGORIES, index=FIXED_CATEGORIES.index(metadata.get("category", "Others")), key=f"c_{tid}")
+                                    etype = st.text_input("Product Type", value=metadata.get("product_type", ""), key=f"t_{tid}")
+                                    ebrand = st.text_input("Brand", value=tds.get("brand", ""), key=f"b_{tid}")
+                                    egrade = st.text_input("Grade", value=tds.get("grade", ""), key=f"g_{tid}")
+                                    eowner = st.selectbox("Owner", ["Supplier", "Customer", "Competitor"], index=["Supplier", "Customer", "Competitor"].index(tds.get("owner", "Supplier")), key=f"o_{tid}")
+                                    esource = st.text_input("Source", value=tds.get("source", ""), key=f"s_{tid}")
+                                    egenname = st.text_input("Generic Product Name", value=metadata.get("generic_product_name", ""), key=f"gn_{tid}")
+                                    etradename = st.text_input("Trade Name", value=metadata.get("trade_name", ""), key=f"tn_{tid}")
+                                    esupplier = st.text_input("Supplier Name", value=metadata.get("supplier_name", ""), key=f"sn_{tid}")
+                                    epackaging = st.text_input("Packaging Size & Type", value=metadata.get("packaging_size_type", ""), key=f"p_{tid}")
+                                    enetweight = st.text_input("Net Weight", value=metadata.get("net_weight", ""), key=f"nw_{tid}")
+                                    etspec = st.text_area("Technical Specification", value=metadata.get("technical_spec", ""), key=f"ts_{tid}")
+                                    edesc = st.text_area("Description", value=metadata.get("description", ""), key=f"desc_{tid}")
                                     
                                     # LeanChems Product Status
                                     eleanchems = st.selectbox(
                                         "Is it Leanchems legacy/existing/coming product?",
                                         ["Yes", "No"],
-                                        index=0 if prod.get("is_leanchems_product") == "Yes" else 1,
-                                        key=f"leanchems_{pid}"
+                                        index=0 if metadata.get("is_leanchems_product") == "Yes" else 1,
+                                        key=f"leanchems_{tid}"
                                     )
                                     
                                     # Multiple TDS Files Upload (Manage Products only)
@@ -2559,7 +2662,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                     st.info("💡 You can upload multiple TDS files for this product. Each file will be stored separately.")
                                     
                                     # Show existing TDS files
-                                    existing_tds_files = prod.get("additional_tds_files", [])
+                                    existing_tds_files = metadata.get("additional_tds_files", [])
                                     if existing_tds_files:
                                         st.write("**Current TDS Files:**")
                                         for i, tds_file in enumerate(existing_tds_files):
@@ -2608,7 +2711,6 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                 updates = {
                                                     "name": ename.strip(),
                                                     "category": ecat,
-                                                    "product_type": etype.strip() or prod.get("product_type"),
                                                     "description": edesc or None,
                                                     "is_leanchems_product": eleanchems,
                                                 }
@@ -2652,20 +2754,43 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                             "tds_file_type": ftype,
                                                         })
 
-                                                # Append version history entry
-                                                updates["version_history"] = build_version_entry(prod, updates)
-
+                                                # Update TDS data
                                                 try:
-                                                    update_product(pid, updates)
-                                                    st.success("✅ Updated")
-                                                    st.session_state.pop(f"editing_{pid}", None)
+                                                    # Update metadata
+                                                    updated_metadata = metadata.copy()
+                                                    updated_metadata.update({
+                                                        "product_name": ename.strip(),
+                                                        "category": ecat,
+                                                        "product_type": etype.strip(),
+                                                        "generic_product_name": egenname.strip() or None,
+                                                        "trade_name": etradename.strip() or None,
+                                                        "supplier_name": esupplier.strip() or None,
+                                                        "packaging_size_type": epackaging.strip() or None,
+                                                        "net_weight": enetweight.strip() or None,
+                                                        "technical_spec": etspec.strip() or None,
+                                                        "description": edesc.strip() or None,
+                                                        "is_leanchems_product": eleanchems,
+                                                    })
+                                                    
+                                                    # Update TDS record
+                                                    tds_updates = {
+                                                        "brand": ebrand.strip() or None,
+                                                        "grade": egrade.strip() or None,
+                                                        "owner": eowner,
+                                                        "source": esource.strip() or None,
+                                                        "metadata": updated_metadata
+                                                    }
+                                                    
+                                                    supabase.table("tds_data").update(tds_updates).eq("id", tid).execute()
+                                                    st.success("✅ TDS record updated")
+                                                    st.session_state.pop(f"editing_{tid}", None)
                                                     st.rerun()
                                                 except Exception as e:
                                                     st.error(f"Failed to update: {e}")
 
                                     with ac2:
-                                        if st.button("❌ Cancel", key=f"cancel_{pid}"):
-                                            st.session_state.pop(f"editing_{pid}", None)
+                                        if st.button("❌ Cancel", key=f"cancel_{tid}"):
+                                            st.session_state.pop(f"editing_{tid}", None)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -2689,50 +2814,64 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         key="view_search"
     )
 
-    # Fetch products for selected category
+    # Fetch TDS records for selected category
     try:
-        category_products = supabase.table("product_master").select("*").eq("category", selected_category).order("product_type").order("name").execute()
-        products_list = category_products.data or []
+        tds_records = supabase.table("tds_data").select("*").execute()
+        all_tds = tds_records.data or []
     except Exception as e:
-        st.error(f"Failed to fetch products: {e}")
-        products_list = []
+        st.error(f"Failed to fetch TDS records: {e}")
+        all_tds = []
 
-    # Filter by search
-    if search_view:
-        filtered_products = [
-            p for p in products_list 
-            if search_view.lower() in p.get("name", "").lower() or 
-               search_view.lower() in p.get("product_type", "").lower()
-        ]
+    # Filter by category and search
+    filtered_tds = []
+    for tds in all_tds:
+        metadata = tds.get("metadata", {})
+        if metadata.get("category") == selected_category:
+            if search_view:
+                search_text = " ".join([
+                    metadata.get("product_name", ""),
+                    tds.get("brand", ""),
+                    metadata.get("supplier_name", ""),
+                    metadata.get("generic_product_name", "")
+                ]).lower()
+                if search_view.lower() in search_text:
+                    filtered_tds.append(tds)
     else:
-        filtered_products = products_list
+                filtered_tds.append(tds)
 
-    if not filtered_products:
-        st.info(f"📭 No products found in {selected_category} category.")
-        st.markdown(f"💡 [Go to Add Product tab](#) to add your first product in this category.")
+    if not filtered_tds:
+        st.info(f"📭 No TDS records found in {selected_category} category.")
+        st.markdown(f"💡 [Go to Add TDS tab](#) to add your first TDS record in this category.")
     else:
-        # Group by product type
-        by_type = {}
-        for p in filtered_products:
-            ptype = p.get("product_type", "Unknown")
-            by_type.setdefault(ptype, []).append(p)
+        # Group by brand
+        by_brand = {}
+        for tds in filtered_tds:
+            brand = tds.get("brand", "Unknown")
+            by_brand.setdefault(brand, []).append(tds)
 
         # Export button
         col_export1, col_export2 = st.columns([1, 3])
         with col_export1:
-            if st.button("📊 Export CSV", type="secondary", key="export_csv_view_products"):
+            if st.button("📊 Export CSV", type="secondary", key="export_csv_view_tds"):
                 try:
                     import pandas as pd
                     # Prepare data for export
                     export_data = []
-                    for p in filtered_products:
+                    for tds in filtered_tds:
+                        metadata = tds.get("metadata", {})
                         export_data.append({
-                            "Product Name": p.get("name"),
-                            "Product Type": p.get("product_type"),
-                            "Description": p.get("description") or "",
-                            "TDS File": p.get("tds_file_name") or "No TDS",
-                            "Created": p.get("created_at", ""),
-                            "Last Updated": p.get("updated_at", "")
+                            "Product Name": metadata.get("product_name", ""),
+                            "Generic Name": metadata.get("generic_product_name", ""),
+                            "Trade Name": metadata.get("trade_name", ""),
+                            "Brand": tds.get("brand", ""),
+                            "Grade": tds.get("grade", ""),
+                            "Supplier": metadata.get("supplier_name", ""),
+                            "Owner": tds.get("owner", ""),
+                            "Source": tds.get("source", ""),
+                            "Category": metadata.get("category", ""),
+                            "TDS File": metadata.get("tds_file_name", "No TDS"),
+                            "Leanchems Product": metadata.get("is_leanchems_product", "No"),
+                            "Created": tds.get("created_at", "")
                         })
                     
                     df = pd.DataFrame(export_data)
@@ -2740,103 +2879,94 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                     st.download_button(
                         label="💾 Download CSV",
                         data=csv,
-                        file_name=f"{selected_category}_products_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                        file_name=f"{selected_category}_tds_records_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv"
                     )
                 except Exception as e:
                     st.error(f"Export failed: {e}")
 
-        st.markdown(f"**Found {len(filtered_products)} products in {selected_category}**")
+        st.markdown(f"**Found {len(filtered_tds)} TDS records in {selected_category}**")
 
-        # Display products grouped by type
-        for ptype, products in by_type.items():
-            with st.expander(f"🔬 {ptype} ({len(products)} products)", expanded=True):
-                for prod in products:
-                    # Product card
+        # Display TDS records grouped by brand
+        for brand, tds_list in by_brand.items():
+            with st.expander(f"🏷️ {brand} ({len(tds_list)} records)", expanded=True):
+                for tds in tds_list:
+                    tid = tds["id"]
+                    metadata = tds.get("metadata", {})
+                    
+                    # TDS record card
                     with st.container():
                         st.markdown("---")
                         
                         # Main info row
                         col1, col2, col3 = st.columns([3, 2, 1])
                         with col1:
-                            st.markdown(f"**{prod.get('name')}**")
-                            if prod.get("description"):
-                                st.caption(prod.get("description"))
+                            st.markdown(f"**{metadata.get('product_name', 'Unknown Product')}**")
+                            st.caption(f"Generic: {metadata.get('generic_product_name', 'N/A')}")
+                            st.caption(f"Trade: {metadata.get('trade_name', 'N/A')}")
                             # Show LeanChems status
-                            leanchems_status = prod.get("is_leanchems_product", "No")
+                            leanchems_status = metadata.get("is_leanchems_product", "No")
                             if leanchems_status == "Yes":
                                 st.caption("🏢 Leanchems Product")
                         
                         with col2:
                             # TDS status and download
-                            if prod.get("tds_file_url"):
+                            tds_url = metadata.get("tds_file_url")
+                            if tds_url:
                                 st.markdown("📄 **TDS:** Available")
-                                st.markdown(f"[Download TDS]({prod.get('tds_file_url')})")
-                                # Show additional TDS files count
-                                additional_files = prod.get("additional_tds_files", [])
-                                if additional_files:
-                                    st.caption(f"📎 +{len(additional_files)} additional files")
+                                st.markdown(f"[Download TDS]({tds_url})")
+                                st.caption(f"File: {metadata.get('tds_file_name', 'Unknown')}")
                             else:
                                 st.markdown("📄 **TDS:** Not available")
                         
                         with col3:
-                            if st.button("👁️ View Details", key=f"view_{prod['id']}"):
-                                st.session_state[f"viewing_{prod['id']}"] = True
+                            if st.button("👁️ View Details", key=f"view_{tid}"):
+                                st.session_state[f"viewing_{tid}"] = True
 
                         # View Details Modal
-                        if st.session_state.get(f"viewing_{prod['id']}"):
-                            with st.expander(f"📋 Full Details: {prod.get('name')}", expanded=True):
+                        if st.session_state.get(f"viewing_{tid}"):
+                            with st.expander(f"📋 Full Details: {metadata.get('product_name', 'Unknown Product')}", expanded=True):
                                 st.markdown("**Product Information**")
-                                st.write(f"**Category:** {prod.get('category')}")
-                                st.write(f"**Product Type:** {prod.get('product_type')}")
-                                if prod.get("description"):
-                                    st.write(f"**Description:** {prod.get('description')}")
+                                st.write(f"**Product Name:** {metadata.get('product_name', 'N/A')}")
+                                st.write(f"**Generic Product Name:** {metadata.get('generic_product_name', 'N/A')}")
+                                st.write(f"**Trade Name:** {metadata.get('trade_name', 'N/A')}")
+                                st.write(f"**Category:** {metadata.get('category', 'N/A')}")
+                                st.write(f"**Product Type:** {metadata.get('product_type', 'N/A')}")
+                                
+                                st.markdown("**Supplier Information**")
+                                st.write(f"**Supplier Name:** {metadata.get('supplier_name', 'N/A')}")
+                                st.write(f"**Brand:** {tds.get('brand', 'N/A')}")
+                                st.write(f"**Grade:** {tds.get('grade', 'N/A')}")
+                                st.write(f"**Owner:** {tds.get('owner', 'N/A')}")
+                                st.write(f"**Source:** {tds.get('source', 'N/A')}")
+                                
+                                st.markdown("**Packaging & Specifications**")
+                                st.write(f"**Packaging Size & Type:** {metadata.get('packaging_size_type', 'N/A')}")
+                                st.write(f"**Net Weight:** {metadata.get('net_weight', 'N/A')}")
+                                
+                                # Technical Specification
+                                tech_spec = metadata.get("technical_spec")
+                                if tech_spec:
+                                    st.markdown("**Technical Specification:**")
+                                    st.text_area("", value=tech_spec, height=100, disabled=True)
                                 
                                 # TDS Information
                                 st.markdown("**Technical Data Sheet**")
-                                if prod.get("tds_file_url"):
+                                tds_url = metadata.get("tds_file_url")
+                                if tds_url:
                                     col_tds1, col_tds2 = st.columns(2)
                                     with col_tds1:
-                                        st.write(f"**Main TDS File:** {prod.get('tds_file_name')}")
-                                        st.write(f"**Size:** {prod.get('tds_file_size', 0) / 1024:.1f} KB")
+                                        st.write(f"**TDS File:** {metadata.get('tds_file_name', 'Unknown')}")
+                                        st.write(f"**Size:** {metadata.get('tds_file_size', 0) / 1024:.1f} KB")
                                     with col_tds2:
-                                        st.write(f"**Type:** {prod.get('tds_file_type')}")
-                                        st.markdown(f"[📥 Download Main TDS]({prod.get('tds_file_url')})")
+                                        st.write(f"**Type:** {metadata.get('tds_file_type', 'Unknown')}")
+                                        st.markdown(f"[📥 Download TDS]({tds_url})")
                                 else:
-                                    st.write("No main TDS file uploaded")
-                                
-                                # Additional TDS Files
-                                additional_files = prod.get("additional_tds_files", [])
-                                if additional_files:
-                                    st.markdown("**Additional TDS Files:**")
-                                    for i, tds_file in enumerate(additional_files):
-                                        col_add1, col_add2 = st.columns([3, 1])
-                                        with col_add1:
-                                            st.write(f"📄 {tds_file.get('name', 'Unknown file')}")
-                                            if tds_file.get('uploaded_at'):
-                                                st.caption(f"Uploaded: {tds_file.get('uploaded_at')[:19].replace('T', ' ')}")
-                                        with col_add2:
-                                            st.write(f"{tds_file.get('size', 0) / 1024:.1f} KB")
-                                            st.markdown(f"[📥 Download]({tds_file.get('url')})")
-                                
-                                # Version History
-                                st.markdown("**Version History**")
-                                version_history = prod.get("version_history") or []
-                                if version_history:
-                                    for i, entry in enumerate(reversed(version_history[-5:])):  # Show last 5 entries
-                                        ts = entry.get("ts", "")
-                                        changed = entry.get("changed", {})
-                                        if ts:
-                                            st.caption(f"**{ts[:19].replace('T', ' ')}**")
-                                        if changed:
-                                            changes_text = ", ".join([f"{k}: {v}" for k, v in changed.items()])
-                                            st.write(f"Changes: {changes_text}")
-                                else:
-                                    st.write("No version history available")
+                                    st.write("No TDS file uploaded")
                                 
                                 # Close button
-                                if st.button("❌ Close Details", key=f"close_{prod['id']}"):
-                                    st.session_state.pop(f"viewing_{prod['id']}", None)
+                                if st.button("❌ Close Details", key=f"close_{tid}"):
+                                    st.session_state.pop(f"viewing_{tid}", None)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -2882,6 +3012,7 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
             else:
                 analyze_submit = st.form_submit_button("Check Duplicates")
 
+        # Always get the latest extracted data from session state
         extracted = st.session_state.get("chem_ai_extracted", {})
 
         # Trigger analysis when Enter pressed (form submitted)
@@ -2904,6 +3035,7 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                         st.session_state["chem_ai_extracted"] = ai_data
                         extracted = ai_data
                         st.success("AI extraction completed.")
+                        st.rerun()  # Refresh the form to show prefilled data
                     else:
                         st.error("AI extraction failed or not configured.")
             else:
@@ -3014,13 +3146,13 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
 
         # Prefilled editable fields (reordered to requested sequence)
         # 1) Summary 80/20
-        chem_sum_8020 = st.text_area("Summary 80/20 (5–7 bullets)", value=extracted.get("summary_80_20", ""), height=80, key="chem_8020")
+        chem_sum_8020 = st.text_area("Summary 80/20 (5–7 bullets)", value=extracted.get("summary_80_20", ""), height=80)
         # 2) Synonyms
-        chem_syn = st.text_input("Synonyms (comma-separated)", value=csv_default(extracted.get("synonyms", [])), key="chem_syn")
+        chem_syn = st.text_input("Synonyms (comma-separated)", value=csv_default(extracted.get("synonyms", [])))
         # 3) Family
-        chem_family = st.text_input("Family", value=extracted.get("family", ""), key="chem_family")
+        chem_family = st.text_input("Family", value=extracted.get("family", ""))
         # 4) Generic Name
-        chem_gen = st.text_input("Generic Name", value=extracted.get("generic_name", ""), key="chem_generic")
+        chem_gen = st.text_input("Generic Name", value=extracted.get("generic_name", ""))
         # 5) HS Codes (code only)
         def _hs_codes_as_csv():
             try:
@@ -3032,37 +3164,37 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                 return ", ".join(codes)
             except Exception:
                 return ""
-        chem_hs_codes = st.text_input("HS Codes", value=_hs_codes_as_csv(), key="chem_hs_codes")
+        chem_hs_codes = st.text_input("HS Codes", value=_hs_codes_as_csv())
         # 6) CAS IDs
-        chem_cas = st.text_input("CAS IDs", value=csv_default(extracted.get("cas_ids", [])), key="chem_cas")
+        chem_cas = st.text_input("CAS IDs", value=csv_default(extracted.get("cas_ids", [])))
         # 7) Summary Technical
-        chem_sum_tech = st.text_area("Summary Technical", value=extracted.get("summary_technical", ""), height=100, key="chem_sumtech")
+        chem_sum_tech = st.text_area("Summary Technical", value=extracted.get("summary_technical", ""), height=100)
         # 8) Functional Categories
-        chem_func = st.text_input("Functional Categories", value=csv_default(extracted.get("functional_categories", [])), key="chem_func")
+        chem_func = st.text_input("Functional Categories", value=csv_default(extracted.get("functional_categories", [])))
         # 9) Industry Segments
-        chem_inds = st.text_input("Industry Segments", value=csv_default(extracted.get("industry_segments", [])), key="chem_inds")
+        chem_inds = st.text_input("Industry Segments", value=csv_default(extracted.get("industry_segments", [])))
         # 10) Key Applications
-        chem_keys = st.text_input("Key Applications", value=csv_default(extracted.get("key_applications", [])), key="chem_keys")
+        chem_keys = st.text_input("Key Applications", value=csv_default(extracted.get("key_applications", [])))
         # 11) Typical Dosage
-        chem_dosage_json = st.text_area("Typical Dosage", value=_ai_list_as_lines(extracted.get("typical_dosage")) if extracted else "", height=80, key="chem_dosage_json")
+        chem_dosage_json = st.text_area("Typical Dosage", value=_ai_list_as_lines(extracted.get("typical_dosage")) if extracted else "", height=80)
         # 12) Physical Snapshot
-        chem_phys_json = st.text_area("Physical Snapshot", value=_ai_list_as_lines(extracted.get("physical_snapshot")) if extracted else "", height=80, key="chem_phys_json")
+        chem_phys_json = st.text_area("Physical Snapshot", value=_ai_list_as_lines(extracted.get("physical_snapshot")) if extracted else "", height=80)
         # 13) Compatibilities
-        chem_compat = st.text_input("Compatibilities", value=csv_default(extracted.get("compatibilities", [])), key="chem_compat")
+        chem_compat = st.text_input("Compatibilities", value=csv_default(extracted.get("compatibilities", [])))
         # 14) Incompatibilities
-        chem_incompat = st.text_input("Incompatibilities", value=csv_default(extracted.get("incompatibilities", [])), key="chem_incompat")
+        chem_incompat = st.text_input("Incompatibilities", value=csv_default(extracted.get("incompatibilities", [])))
         # 15) Sensitivities
-        chem_sens = st.text_input("Sensitivities", value=csv_default(extracted.get("sensitivities", [])), key="chem_sens")
+        chem_sens = st.text_input("Sensitivities", value=csv_default(extracted.get("sensitivities", [])))
         # 16) Appearance
-        chem_appearance = st.text_input("Appearance", value=extracted.get("appearance", ""), key="chem_appearance")
+        chem_appearance = st.text_input("Appearance", value=extracted.get("appearance", ""))
         # 17) Storage Conditions
-        chem_storage = st.text_input("Storage Conditions", value=extracted.get("storage_conditions", ""), key="chem_storage")
+        chem_storage = st.text_input("Storage Conditions", value=extracted.get("storage_conditions", ""))
         # 18) Packaging Options
-        chem_pack = st.text_input("Packaging Options", value=csv_default(extracted.get("packaging_options", [])), key="chem_pack")
+        chem_pack = st.text_input("Packaging Options", value=csv_default(extracted.get("packaging_options", [])))
         # 19) Shelf Life (months)
-        chem_shelf = st.number_input("Shelf Life (months)", min_value=0, max_value=120, value=int(extracted.get("shelf_life_months", 0) if extracted else 0), step=1, key="chem_shelf")
+        chem_shelf = st.number_input("Shelf Life (months)", min_value=0, max_value=120, value=int(extracted.get("shelf_life_months", 0) if extracted else 0), step=1)
         # 20) Data Completeness
-        chem_dc = st.slider("Data Completeness", min_value=0.0, max_value=1.0, value=float(extracted.get("data_completeness", 0.0) if extracted else 0.0), step=0.05, key="chem_dc")
+        chem_dc = st.slider("Data Completeness", min_value=0.0, max_value=1.0, value=float(extracted.get("data_completeness", 0.0) if extracted else 0.0), step=0.05)
 
         # Show one-line source indicator
         if extracted:
@@ -3072,7 +3204,7 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
 
         if st.button("Save Chemical", type="primary"):
             # Basic validations
-            base_name = normalize_chemical_name(st.session_state.get("chem_generic", ""))
+            base_name = normalize_chemical_name(chem_gen)
             if not base_name:
                 st.error("Chemical name is required")
             elif chemical_name_exists(base_name):
@@ -3100,38 +3232,38 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                     payload = {
                         "id": str(uuid.uuid4()),
                         "generic_name": base_name or ai.get("generic_name"),
-                        "family": prefer_manual_str(st.session_state.get("chem_family"), "family"),
-                        "synonyms": prefer_manual_csv(st.session_state.get("chem_syn"), "synonyms"),
-                        "cas_ids": prefer_manual_csv(st.session_state.get("chem_cas"), "cas_ids"),
+                        "family": prefer_manual_str(chem_family, "family"),
+                        "synonyms": prefer_manual_csv(chem_syn, "synonyms"),
+                        "cas_ids": prefer_manual_csv(chem_cas, "cas_ids"),
                         "hs_codes": (
                             [
                                 {"region": "WCO", "code": code}
-                                for code in parse_csv_list(st.session_state.get("chem_hs_codes"))
+                                for code in parse_csv_list(chem_hs_codes)
                             ]
                             or ai.get("hs_codes")
                             or []
                         ),
-                        "functional_categories": prefer_manual_csv(st.session_state.get("chem_func"), "functional_categories"),
-                        "industry_segments": prefer_manual_csv(st.session_state.get("chem_inds"), "industry_segments"),
-                        "key_applications": prefer_manual_csv(st.session_state.get("chem_keys"), "key_applications"),
+                        "functional_categories": prefer_manual_csv(chem_func, "functional_categories"),
+                        "industry_segments": prefer_manual_csv(chem_inds, "industry_segments"),
+                        "key_applications": prefer_manual_csv(chem_keys, "key_applications"),
                         "typical_dosage": (
-                            _parse_kv_lines(st.session_state.get("chem_dosage_json"))
-                            or prefer_manual_jsonarr(st.session_state.get("chem_dosage_json"), "typical_dosage")
+                            _parse_kv_lines(chem_dosage_json)
+                            or prefer_manual_jsonarr(chem_dosage_json, "typical_dosage")
                         ),
-                        "appearance": prefer_manual_str(st.session_state.get("chem_appearance"), "appearance"),
+                        "appearance": prefer_manual_str(chem_appearance, "appearance"),
                         "physical_snapshot": (
-                            _parse_kv_lines(st.session_state.get("chem_phys_json"))
-                            or prefer_manual_jsonarr(st.session_state.get("chem_phys_json"), "physical_snapshot")
+                            _parse_kv_lines(chem_phys_json)
+                            or prefer_manual_jsonarr(chem_phys_json, "physical_snapshot")
                         ),
-                        "compatibilities": prefer_manual_csv(st.session_state.get("chem_compat"), "compatibilities"),
-                        "incompatibilities": prefer_manual_csv(st.session_state.get("chem_incompat"), "incompatibilities"),
-                        "sensitivities": prefer_manual_csv(st.session_state.get("chem_sens"), "sensitivities"),
-                        "shelf_life_months": int(st.session_state.get("chem_shelf") or ai.get("shelf_life_months") or 0),
-                        "storage_conditions": prefer_manual_str(st.session_state.get("chem_storage"), "storage_conditions"),
-                        "packaging_options": prefer_manual_csv(st.session_state.get("chem_pack"), "packaging_options"),
-                        "summary_80_20": prefer_manual_str(st.session_state.get("chem_8020"), "summary_80_20"),
-                        "summary_technical": prefer_manual_str(st.session_state.get("chem_sumtech"), "summary_technical"),
-                        "data_completeness": float(st.session_state.get("chem_dc") or ai.get("data_completeness") or 0.0),
+                        "compatibilities": prefer_manual_csv(chem_compat, "compatibilities"),
+                        "incompatibilities": prefer_manual_csv(chem_incompat, "incompatibilities"),
+                        "sensitivities": prefer_manual_csv(chem_sens, "sensitivities"),
+                        "shelf_life_months": int(chem_shelf or ai.get("shelf_life_months") or 0),
+                        "storage_conditions": prefer_manual_str(chem_storage, "storage_conditions"),
+                        "packaging_options": prefer_manual_csv(chem_pack, "packaging_options"),
+                        "summary_80_20": prefer_manual_str(chem_sum_8020, "summary_80_20"),
+                        "summary_technical": prefer_manual_str(chem_sum_tech, "summary_technical"),
+                        "data_completeness": float(chem_dc or ai.get("data_completeness") or 0.0),
                     }
                     create_chemical(payload)
                     st.success("✅ Chemical saved successfully")
@@ -3205,13 +3337,25 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                         esyn = st.text_input("Synonyms (comma-separated)", value=", ".join(chem.get("synonyms") or []), key=f"csy_{cid}")
                         ecas = st.text_input("CAS IDs (comma-separated)", value=", ".join(chem.get("cas_ids") or []), key=f"cca_{cid}")
                     with ec2:
-                        ehs_json = st.text_area("HS Codes JSON", value=(__import__("json").dumps(chem.get("hs_codes")) if chem.get("hs_codes") else ""), height=70, key=f"ch_{cid}")
+                        # Human-readable HS Codes (comma-separated)
+                        _hs_list = []
+                        try:
+                            for it in (chem.get("hs_codes") or []):
+                                if isinstance(it, dict) and it.get("code"):
+                                    _hs_list.append(str(it.get("code")))
+                        except Exception:
+                            pass
+                        if not _hs_list and chem.get("hs_code"):
+                            _hs_list = [str(chem.get("hs_code"))]
+                        ehs_text = st.text_input("HS Codes (comma-separated)", value=", ".join(_hs_list), key=f"ch_{cid}")
                         efunc = st.text_input("Functional Categories (comma-separated)", value=", ".join(chem.get("functional_categories") or []), key=f"cc_{cid}")
                         eind = st.text_input("Industry Segments (comma-separated)", value=", ".join(chem.get("industry_segments") or []), key=f"ci_{cid}")
                     ekeys = st.text_input("Key Applications (comma-separated)", value=", ".join(chem.get("key_applications") or []), key=f"cak_{cid}")
-                    edosage_json = st.text_area("Typical Dosage JSON", value=(__import__("json").dumps(chem.get("typical_dosage")) if chem.get("typical_dosage") else ""), height=70, key=f"cdj_{cid}")
+                    # Human-readable Typical Dosage: one per line as "application: range"
+                    edosage_lines = st.text_area("Typical Dosage (one per line: application: range)", value=_ai_list_as_lines(chem.get("typical_dosage")) if chem.get("typical_dosage") else "", height=70, key=f"cdj_{cid}")
                     eappearance = st.text_input("Appearance", value=chem.get("appearance", ""), key=f"cap_{cid}")
-                    ephys_json = st.text_area("Physical Snapshot JSON", value=(__import__("json").dumps(chem.get("physical_snapshot")) if chem.get("physical_snapshot") else ""), height=70, key=f"cps_{cid}")
+                    # Human-readable Physical Snapshot: one per line as "key: value, unit: U, method: M"
+                    ephys_lines = st.text_area("Physical Snapshot (one per line: name: value, unit: U, method: M)", value=_ai_list_as_lines(chem.get("physical_snapshot")) if chem.get("physical_snapshot") else "", height=70, key=f"cps_{cid}")
                     ecompat = st.text_input("Compatibilities (comma-separated)", value=", ".join(chem.get("compatibilities") or []), key=f"ccom_{cid}")
                     eincompat = st.text_input("Incompatibilities (comma-separated)", value=", ".join(chem.get("incompatibilities") or []), key=f"cinc_{cid}")
                     esens = st.text_input("Sensitivities (comma-separated)", value=", ".join(chem.get("sensitivities") or []), key=f"csen_{cid}")
@@ -3240,13 +3384,18 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                                         "family": efamily.strip() or None,
                                         "synonyms": [s.strip() for s in esyn.split(",") if s.strip()],
                                         "cas_ids": [s.strip() for s in ecas.split(",") if s.strip()],
-                                        "hs_codes": parse_json_list(ehs_json),
+                                        "hs_codes": (
+                                            [
+                                                {"region": "WCO", "code": code}
+                                                for code in [s.strip() for s in ehs_text.split(",") if s.strip()]
+                                            ]
+                                        ),
                                         "functional_categories": [s.strip() for s in efunc.split(",") if s.strip()],
                                         "industry_segments": [s.strip() for s in eind.split(",") if s.strip()],
                                         "key_applications": [s.strip() for s in ekeys.split(",") if s.strip()],
-                                        "typical_dosage": parse_json_list(edosage_json),
+                                        "typical_dosage": _parse_kv_lines(edosage_lines),
                                         "appearance": eappearance.strip() or None,
-                                        "physical_snapshot": parse_json_list(ephys_json),
+                                        "physical_snapshot": _parse_kv_lines(ephys_lines),
                                         "compatibilities": [s.strip() for s in ecompat.split(",") if s.strip()],
                                         "incompatibilities": [s.strip() for s in eincompat.split(",") if s.strip()],
                                         "sensitivities": [s.strip() for s in esens.split(",") if s.strip()],
@@ -3410,7 +3559,7 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             return None
 
     def list_all_tds():
-        """Return list of chemical types to select from (replacing product_master)."""
+        """Return list of chemical types to select from."""
         try:
             # Using chemical_types as the source of selectable items
             res = supabase.table("chemical_types").select("id,name,category").order("category").order("name").execute()
