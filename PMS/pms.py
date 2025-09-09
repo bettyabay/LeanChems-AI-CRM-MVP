@@ -657,11 +657,25 @@ def _render_login_screen():
                             "email": email_s,
                             "password": password
                         })
-                        if resp and resp.user:
+                        if resp and resp.user and resp.session:
+                            # Set the session state variables that the app expects
                             st.session_state["authenticated"] = True
                             st.session_state["user_email"] = email_s
                             st.session_state["user_name"] = resp.user.user_metadata.get("name", email_s.split("@")[0])
-                            st.success("✅ Login successful!")
+                            
+                            # Set the Supabase user and session data
+                            user_role = ((resp.user.user_metadata or {}).get("role") if hasattr(resp.user, "user_metadata") else None) or "viewer"
+                            st.session_state["sb_user"] = {
+                                "id": resp.user.id,
+                                "email": resp.user.email,
+                                "role": user_role,
+                            }
+                            st.session_state["sb_session"] = {
+                                "access_token": resp.session.access_token,
+                                "refresh_token": resp.session.refresh_token,
+                            }
+                            
+                            st.success("✅ Login successful! Redirecting...")
                             st.rerun()
                         else:
                             st.error("❌ Invalid login response")
