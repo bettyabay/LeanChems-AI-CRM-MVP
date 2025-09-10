@@ -1913,6 +1913,10 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                         "trade_name": (trade_name or None),
                         "supplier_name": (supplier_name or None),
                         "packaging_size_type": (packaging_size_type or None),
+                        # Duplicate important fields for UI rendering (also stored in specs)
+                        "net_weight": (net_weight or None),
+                        "technical_spec": (technical_spec or None),
+                        "description": (description or None),
                         # TDS file info
                         "tds_file_url": tds_url,
                         "tds_file_name": tds_name,
@@ -2658,8 +2662,16 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                     etradename = st.text_input("Trade Name", value=metadata.get("trade_name", ""), key=f"tn_{tid}")
                                     esupplier = st.text_input("Supplier Name", value=metadata.get("supplier_name", ""), key=f"sn_{tid}")
                                     epackaging = st.text_input("Packaging Size & Type", value=metadata.get("packaging_size_type", ""), key=f"p_{tid}")
-                                    enetweight = st.text_input("Net Weight", value=metadata.get("net_weight", ""), key=f"nw_{tid}")
-                                    etspec = st.text_area("Technical Specification", value=metadata.get("technical_spec", ""), key=f"ts_{tid}")
+                                    _specs_src = tds.get("specs") or {}
+                                    _net_w_fallback = metadata.get("net_weight") or _specs_src.get("net_weight") or ""
+                                    _tech_fallback = (
+                                        metadata.get("technical_spec")
+                                        or _specs_src.get("technical_specification")
+                                        or _specs_src.get("technical_spec")
+                                        or ""
+                                    )
+                                    enetweight = st.text_input("Net Weight", value=_net_w_fallback, key=f"nw_{tid}")
+                                    etspec = st.text_area("Technical Specification", value=_tech_fallback, key=f"ts_{tid}")
                                     edesc = st.text_area("Description", value=metadata.get("description", ""), key=f"desc_{tid}")
                                     
                                     # LeanChems Product Status
@@ -2686,12 +2698,14 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                             with col_tds2:
                                                 st.write(f"{tds_file.get('size', 0) / 1024:.1f} KB")
                                             with col_tds3:
-                                                if st.button(f"🗑️ Remove", key=f"remove_tds_{pid}_{i}"):
+                                                if st.button(f"🗑️ Remove", key=f"remove_tds_{tid}_{i}"):
                                                     # Remove file from list
                                                     existing_tds_files.pop(i)
-                                                    # Update product
+                                                    # Persist change back into this TDS record's metadata
                                                     try:
-                                                        update_product(pid, {"additional_tds_files": existing_tds_files})
+                                                        updated_meta = metadata.copy()
+                                                        updated_meta["additional_tds_files"] = existing_tds_files
+                                                        supabase.table("tds_data").update({"metadata": updated_meta}).eq("id", tid).execute()
                                                         st.success("File removed successfully!")
                                                         st.rerun()
                                                     except Exception as e:
@@ -2702,23 +2716,23 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                         "Upload Additional TDS Files (optional)", 
                                         type=ALLOWED_FILE_EXTS, 
                                         accept_multiple_files=True,
-                                        key=f"multi_tds_{pid}"
+                                        key=f"multi_tds_{tid}"
                                     )
                                     
                                     # Replace main TDS (single file)
                                     st.markdown("---")
                                     st.subheader("🔄 Replace Main TDS")
-                                    new_tds = st.file_uploader("Replace Main TDS (optional)", type=ALLOWED_FILE_EXTS, key=f"f_{pid}")
+                                    new_tds = st.file_uploader("Replace Main TDS (optional)", type=ALLOWED_FILE_EXTS, key=f"f_{tid}")
 
                                     # Actions
                                     ac1, ac2 = st.columns(2)
                                     with ac1:
-                                        if st.button("💾 Save", key=f"save_{pid}"):
+                                        if st.button("💾 Save", key=f"save_{tid}"):
                                             # Validations
                                             n_ok, n_msg = validate_product_name(ename)
                                             if not n_ok:
                                                 st.error(n_msg)
-                                            elif name_exists_other(ename, pid):
+                                            elif name_exists_other(ename, tds.get("chemical_type_id") or ""):
                                                 st.error("Another product already uses this name")
                                             else:
                                                 # Build updates
@@ -2741,7 +2755,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                         
                                                         # Upload to Supabase
                                                         try:
-                                                            url, fname, fsize, ftype = upload_tds_to_supabase(uploaded_file, pid)
+                                                            url, fname, fsize, ftype = upload_tds_to_supabase(uploaded_file, tid)
                                                             additional_files.append({
                                                                 "url": url,
                                                                 "name": fname,
@@ -2760,7 +2774,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                     if not okf:
                                                         st.error(msgf)
                                                     else:
-                                                        url, fname, fsize, ftype = upload_tds_to_supabase(new_tds, pid)
+                                                        url, fname, fsize, ftype = upload_tds_to_supabase(new_tds, tid)
                                                         updates.update({
                                                             "tds_file_url": url,
                                                             "tds_file_name": fname,
@@ -2785,6 +2799,12 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                         "description": edesc.strip() or None,
                                                         "is_leanchems_product": eleanchems,
                                                     })
+                                                    # Bring through file-related updates into metadata for consistency
+                                                    if "additional_tds_files" in updates:
+                                                        updated_metadata["additional_tds_files"] = updates["additional_tds_files"]
+                                                    for _k in ["tds_file_url","tds_file_name","tds_file_size","tds_file_type"]:
+                                                        if _k in updates:
+                                                            updated_metadata[_k] = updates[_k]
                                                     
                                                     # Update TDS record
                                                     tds_updates = {
@@ -2850,7 +2870,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                 ]).lower()
                 if search_view.lower() in search_text:
                     filtered_tds.append(tds)
-    else:
+            else:
                 filtered_tds.append(tds)
 
     if not filtered_tds:
@@ -2955,14 +2975,19 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                 st.write(f"**Source:** {tds.get('source', 'N/A')}")
                                 
                                 st.markdown("**Packaging & Specifications**")
+                                _specs_src = tds.get("specs") or {}
+                                _net_w = metadata.get('net_weight') or _specs_src.get('net_weight') or 'N/A'
                                 st.write(f"**Packaging Size & Type:** {metadata.get('packaging_size_type', 'N/A')}")
-                                st.write(f"**Net Weight:** {metadata.get('net_weight', 'N/A')}")
+                                st.write(f"**Net Weight:** {_net_w}")
                                 
                                 # Technical Specification
-                                tech_spec = metadata.get("technical_spec")
+                                tech_spec = metadata.get("technical_spec") or _specs_src.get("technical_specification") or _specs_src.get("technical_spec")
                                 if tech_spec:
                                     st.markdown("**Technical Specification:**")
-                                    st.text_area("", value=tech_spec, height=100, disabled=True)
+                                    try:
+                                        st.code(tech_spec, language="text")
+                                    except Exception:
+                                        st.markdown(f"```text\n{tech_spec}\n```")
                                 
                                 # TDS Information
                                 st.markdown("**Technical Data Sheet**")
