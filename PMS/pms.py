@@ -227,6 +227,8 @@ button[kind="secondary"] {
     text-align: center;
     line-height: 1.2;
     word-break: break-word;
+    color: #111 !important; /* improve readability of nav labels */
+    text-shadow: none !important;
 }
 
 button[kind="secondary"]:hover {
@@ -863,7 +865,8 @@ SOURCING_MASTER_ACCESS = {
     "iman@leanchems.com",
     "meraf@leanchems.com", 
     "alhadi@leanchems.com",
-    "bettyabay@leanchems.com"
+    "bettyabay@leanchems.com",
+    "daniel@leanchems.com"
 }
 
 def has_chemical_master_access(user_email: str) -> bool:
@@ -1518,6 +1521,14 @@ nav_items = [
         "subtitle": "Business partner",
         "description": "Manage partners linked to TDS records",
         "icon": "🤝",
+        "access": user_access["sourcing"]
+    },
+    {
+        "key": "pricing",
+        "title": "💵 Pricing & Costing Master Data",
+        "subtitle": "Pricing & Costing",
+        "description": "Maintain partner/TDS pricing and costing by incoterm",
+        "icon": "💵",
         "access": user_access["sourcing"]
     },
     {
@@ -3896,5 +3907,225 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                                         st.caption(f"TDS: {rec.get('tds_file_name') or 'file'}  •  [Download]({rec.get('tds_file_url')})")
                                     else:
                                         st.caption("TDS: Not available")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ==========================
+# UI - Pricing & Costing Master Data
+# ==========================
+if st.session_state.get("main_section") == "pricing" and has_sourcing_master_access(user_email):
+    st.markdown('<h1 style="color:#1976d2; font-weight:700;">Pricing & Costing Master Data</h1>', unsafe_allow_html=True)
+    st.markdown('<div class="form-card">', unsafe_allow_html=True)
+
+    # Helpers
+    def _fetch_partners_simple() -> list[dict]:
+        try:
+            return supabase.table("partner_data").select("id,partner,partner_country").order("partner").execute().data or []
+        except Exception:
+            return []
+
+    def _fetch_tds_simple() -> list[dict]:
+        try:
+            rows = supabase.table("tds_data").select("id,chemical_type_id,brand,metadata").order("created_at", desc=True).execute().data or []
+            items = []
+            for r in rows:
+                meta = r.get("metadata") or {}
+                items.append({
+                    "id": r.get("id"),
+                    "chemical_type_id": r.get("chemical_type_id"),
+                    "name": meta.get("product_name") or meta.get("generic_product_name") or (r.get("brand") or "Unnamed"),
+                    "category": meta.get("category") or "Others",
+                })
+            return items
+        except Exception:
+            return []
+
+    def _incoterm_rows_default():
+        rows = [
+            {"incoterm": "Ex-Work", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
+            {"incoterm": "FOB", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
+            {"incoterm": "CIF Mombasa", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
+            {"incoterm": "SEZ MCF", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
+            {"incoterm": "Nairobi", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
+            {"incoterm": "FCA Moyale", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
+            {"incoterm": "Addis", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
+        ]
+        return rows
+
+    def _pricing_table_add(partner_id: str, tds_id: str, rows: list[dict]):
+        try:
+            payload = {
+                "partner_id": partner_id,
+                "tds_id": tds_id,
+                "rows": rows,
+            }
+            return supabase.table("costing_pricing_data").insert(payload).execute()
+        except Exception as e:
+            st.error(f"Failed to save pricing: {e}")
+            return None
+
+    def _pricing_table_update(pid: str, updates: dict):
+        try:
+            return supabase.table("costing_pricing_data").update(updates).eq("id", pid).execute()
+        except Exception as e:
+            st.error(f"Failed to update pricing: {e}")
+            return None
+
+    def _pricing_table_delete(pid: str):
+        try:
+            return supabase.table("costing_pricing_data").delete().eq("id", pid).execute()
+        except Exception as e:
+            st.error(f"Failed to delete pricing: {e}")
+            return None
+
+    def _pricing_fetch_all():
+        try:
+            return supabase.table("costing_pricing_data").select("*").order("created_at", desc=True).execute().data or []
+        except Exception as e:
+            st.info("Pricing table not found yet. It will be created when you save your first record.")
+            return []
+
+    tab_p_add, tab_p_manage, tab_p_view = st.tabs(["Add", "Manage", "View"])
+
+    # Add
+    with tab_p_add:
+        colp1, colp2 = st.columns(2)
+        partners = _fetch_partners_simple()
+        partner_opts = {f"{p.get('partner')} ({p.get('partner_country')})": p.get("id") for p in partners}
+        tds_items = _fetch_tds_simple()
+        tds_opts = {f"{t.get('name')} — {t.get('category')}": t.get("id") for t in tds_items}
+
+        with colp1:
+            sel_partner_label = st.selectbox("Partner", list(partner_opts.keys()) or ["—"], index=0 if partner_opts else 0)
+        with colp2:
+            sel_tds_label = st.selectbox("Select TDS", list(tds_opts.keys()) or ["—"], index=0 if tds_opts else 0)
+
+        # Editable pricing table
+        st.markdown("---")
+        st.subheader("Pricing & Costing Table")
+        if "pricing_rows_add" not in st.session_state:
+            st.session_state["pricing_rows_add"] = _incoterm_rows_default()
+
+        rows = st.session_state["pricing_rows_add"]
+        # Render rows
+        st.caption("Incoterm | Costing USD | Costing ETB | Pricing USD | Pricing ETB")
+        for i, r in enumerate(rows):
+            c1, c2, c3, c4, c5 = st.columns([2,2,2,2,2])
+            with c1:
+                st.text_input("Incoterm", value=r.get("incoterm", ""), key=f"p_inc_{i}")
+            with c2:
+                st.text_input("Costing USD", value=r.get("cost_usd", ""), key=f"p_cu_{i}")
+            with c3:
+                st.text_input("Costing ETB", value=r.get("cost_etb", ""), key=f"p_ce_{i}")
+            with c4:
+                st.text_input("Pricing USD", value=r.get("price_usd", ""), key=f"p_pu_{i}")
+            with c5:
+                st.text_input("Pricing ETB", value=r.get("price_etb", ""), key=f"p_pe_{i}")
+
+        add_row_col, save_col = st.columns([1,1])
+        with add_row_col:
+            if st.button("➕ Add Row", key="p_add_row"):
+                rows.append({"incoterm": "", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""})
+        with save_col:
+            if st.button("💾 Save Pricing", type="primary", key="p_save_add"):
+                # Collect values back from widgets
+                out_rows = []
+                for i in range(len(rows)):
+                    out_rows.append({
+                        "incoterm": st.session_state.get(f"p_inc_{i}") or "",
+                        "cost_usd": st.session_state.get(f"p_cu_{i}") or "",
+                        "cost_etb": st.session_state.get(f"p_ce_{i}") or "",
+                        "price_usd": st.session_state.get(f"p_pu_{i}") or "",
+                        "price_etb": st.session_state.get(f"p_pe_{i}") or "",
+                    })
+                pid = partner_opts.get(sel_partner_label)
+                tid = tds_opts.get(sel_tds_label)
+                if not pid or not tid:
+                    st.error("Please select Partner and TDS")
+                else:
+                    resp = _pricing_table_add(pid, tid, out_rows)
+                    if resp is not None:
+                        st.success("✅ Pricing saved")
+
+    # Manage
+    with tab_p_manage:
+        records = _pricing_fetch_all()
+        if not records:
+            st.info("No pricing records found")
+        else:
+            # Build partner id -> name map
+            _partners_map = {}
+            try:
+                for p in _fetch_partners_simple():
+                    _partners_map[p.get("id")] = p.get("partner")
+            except Exception:
+                _partners_map = {}
+            for rec in records:
+                rid = rec.get("id")
+                partner_id = rec.get("partner_id")
+                tds_id = rec.get("tds_id")
+                rows = rec.get("rows") or _incoterm_rows_default()
+
+                _pname = _partners_map.get(partner_id, partner_id or "-")
+                with st.expander(f"Costing & Pricing — {_pname}", expanded=False):
+                    # Editable table like Add
+                    st.caption("Incoterm | Costing USD | Costing ETB | Pricing USD | Pricing ETB")
+                    for i, r in enumerate(rows):
+                        c1, c2, c3, c4, c5 = st.columns([2,2,2,2,2])
+                        with c1:
+                            st.text_input("Incoterm", value=r.get("incoterm", ""), key=f"pm_inc_{rid}_{i}")
+                        with c2:
+                            st.text_input("Costing USD", value=r.get("cost_usd", ""), key=f"pm_cu_{rid}_{i}")
+                        with c3:
+                            st.text_input("Costing ETB", value=r.get("cost_etb", ""), key=f"pm_ce_{rid}_{i}")
+                        with c4:
+                            st.text_input("Pricing USD", value=r.get("price_usd", ""), key=f"pm_pu_{rid}_{i}")
+                        with c5:
+                            st.text_input("Pricing ETB", value=r.get("price_etb", ""), key=f"pm_pe_{rid}_{i}")
+
+                    mc1, mc2, mc3 = st.columns([1,1,1])
+                    with mc1:
+                        if st.button("💾 Save", key=f"pm_save_{rid}"):
+                            # collect
+                            new_rows = []
+                            for i in range(len(rows)):
+                                new_rows.append({
+                                    "incoterm": st.session_state.get(f"pm_inc_{rid}_{i}") or "",
+                                    "cost_usd": st.session_state.get(f"pm_cu_{rid}_{i}") or "",
+                                    "cost_etb": st.session_state.get(f"pm_ce_{rid}_{i}") or "",
+                                    "price_usd": st.session_state.get(f"pm_pu_{rid}_{i}") or "",
+                                    "price_etb": st.session_state.get(f"pm_pe_{rid}_{i}") or "",
+                                })
+                            _pricing_table_update(rid, {"rows": new_rows})
+                            st.success("Updated")
+                            st.rerun()
+                    with mc2:
+                        if st.button("🗑️ Delete", key=f"pm_del_{rid}"):
+                            _pricing_table_delete(rid)
+                            st.success("Deleted")
+                            st.rerun()
+                    with mc3:
+                        st.caption(f"Partner ID: {partner_id}  •  TDS ID: {tds_id}")
+
+    # View
+    with tab_p_view:
+        records = _pricing_fetch_all()
+        if not records:
+            st.info("No pricing records found")
+        else:
+            _partners_map = {}
+            try:
+                for p in _fetch_partners_simple():
+                    _partners_map[p.get("id")] = p.get("partner")
+            except Exception:
+                _partners_map = {}
+            for rec in records:
+                rid = rec.get("id")
+                rows = rec.get("rows") or []
+                _pname = _partners_map.get(rec.get("partner_id"), rec.get("partner_id") or "-")
+                with st.expander(f"Costing & Pricing — {_pname}", expanded=False):
+                    st.caption("Incoterm | Costing USD | Costing ETB | Pricing USD | Pricing ETB")
+                    for r in rows:
+                        st.write(f"- {r.get('incoterm','')} | {r.get('cost_usd','')} | {r.get('cost_etb','')} | {r.get('price_usd','')} | {r.get('price_etb','')}")
 
     st.markdown('</div>', unsafe_allow_html=True)
