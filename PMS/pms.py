@@ -919,6 +919,9 @@ if user_email:
         access_info.append("Chemical Master Data")
     if user_access["sourcing"]:
         access_info.append("Sourcing Master Data")
+        # Also expose sourcing-linked modules when sourcing access is granted
+        access_info.append("Partner Master Data")
+        access_info.append("Pricing & Costing Master Data")
     if user_access["leanchem"]:
         access_info.append("LeanChem Products")
     if user_access["market"]:
@@ -1657,7 +1660,6 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
 
     with st.container():
         st.subheader("Basic Information")
-        name = st.text_input("Product Name *", placeholder="Unique product name")
         # Category select (selection only; no add)
         category = st.selectbox(
             "Chemical Category *",
@@ -1691,6 +1693,9 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         else:
             st.info("No mapped product types for this category in Chemical Master Data.")
             selected_type = ""
+
+        # Product Name after selecting category and type
+        name = st.text_input("Product Name *", placeholder="Unique product name")
 
         description = st.text_area("Description", placeholder="Optional description", height=100)
 
@@ -2064,6 +2069,8 @@ def _map_type_record_to_legacy(rec: dict) -> dict:
             "summary_80_20": meta.get("summary_80_20"),
             "summary_technical": meta.get("summary_technical"),
             "data_completeness": meta.get("data_completeness", rec.get("data_completeness")),
+            # ensure shelf life is visible in legacy dict
+            "shelf_life_months": rec.get("shelf_life_months") if rec.get("shelf_life_months") is not None else meta.get("shelf_life_months"),
             # hs_codes: prefer metadata; else derive from core hs_code column if present
             "hs_codes": (meta.get("hs_codes") or ([{"region": "WCO", "code": rec.get("hs_code")}]
                            if rec.get("hs_code") else [])),
@@ -3566,7 +3573,7 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                 title_suffix = ", ".join(c.get('industry_segments') or [])
                 with st.expander(f"🧪 {c.get('generic_name')} — {title_suffix}"):
                     for key, label in CHEM_VIEW_DETAIL_FIELDS:
-                        st.write(f"{label}: {_format_chem_field(c.get(key))}")
+                        st.markdown(f"**{label}:** {_format_chem_field(c.get(key))}")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
