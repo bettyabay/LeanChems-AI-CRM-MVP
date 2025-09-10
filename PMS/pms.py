@@ -445,6 +445,28 @@ h2 {
 }
 
 </style>
+<style>
+/* Smaller buttons in Manage Partners */
+.partner-actions button[kind="primary"],
+.partner-actions button[kind="secondary"],
+.partner-actions button {
+    padding: 0.4rem 0.8rem !important;
+    font-size: 0.85rem !important;
+    border-radius: 8px !important;
+}
+.partner-actions-small button {
+    padding: 0.35rem 0.7rem !important;
+    font-size: 0.8rem !important;
+}
+.partner-actions-cta button {
+    padding: 0.45rem 0.9rem !important;
+    font-size: 0.9rem !important;
+    width: auto !important; /* shrink to text length */
+}
+.partner-actions div[data-testid="stVerticalBlock"] > div {
+    gap: 0.5rem !important;
+}
+</style>
 """, unsafe_allow_html=True)
 
 # Env and client
@@ -794,7 +816,13 @@ with col_user:
     _role = (sb_user.get('role') or '').lower()
     # Check if user is in managers table
     db_manager_emails = get_manager_emails_from_db()
-    _is_mgr_display = (_role in {"manager", "admin"}) or (_email_lc in MANAGER_EMAILS) or (_email_lc in db_manager_emails)
+    _is_mgr_display = (
+        (_role in {"manager", "admin"})
+        or (_email_lc in MANAGER_EMAILS)
+        or (_email_lc in db_manager_emails)
+        or (_email_lc == "daniel@leanchems.com")
+        or (_email_lc == "alhadi@leanchems.com")
+    )
     _role_text = "Manager" if _is_mgr_display else "Viewer"
     
     st.markdown(f'''
@@ -864,8 +892,8 @@ def get_user_access_levels(user_email: str) -> dict:
     
     user_email_lower = user_email.strip().lower()
     
-    # bettyabay@leanchems.com has access to all functions
-    if user_email_lower == "bettyabay@leanchems.com":
+    # bettyabay@leanchems.com, daniel@leanchems.com and alhadi@leanchems.com have access to all functions
+    if user_email_lower in {"bettyabay@leanchems.com", "daniel@leanchems.com", "alhadi@leanchems.com"}:
         return {
             "chemical": True,
             "sourcing": True,
@@ -903,7 +931,7 @@ db_manager_emails = get_manager_emails_from_db()
 is_manager = False
 if user_role in {"manager", "admin"}:
     is_manager = True
-elif user_email and user_email in (MANAGER_EMAILS or set()):
+elif user_email and (user_email in (MANAGER_EMAILS or set()) or user_email in {"daniel@leanchems.com", "alhadi@leanchems.com"}):
     is_manager = True
 elif MANAGER_DOMAIN and user_email.endswith(f"@{MANAGER_DOMAIN}"):
     is_manager = True
@@ -1487,7 +1515,7 @@ nav_items = [
     {
         "key": "partner_master",
         "title": "🤝 Partner Master Data",
-        "subtitle": "Business parte",
+        "subtitle": "Business partner",
         "description": "Manage partners linked to TDS records",
         "icon": "🤝",
         "access": user_access["sourcing"]
@@ -3555,7 +3583,23 @@ if st.session_state.get("main_section") == "market":
 if st.session_state.get("main_section") == "partner_master" and has_sourcing_master_access(user_email):
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">Partner Master Data</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
-    st.caption("Business parte")
+    st.caption("Business partner")
+
+    # If requested, programmatically switch to Manage tab after a save
+    if st.session_state.get("partner_go_manage"):
+        st.session_state.pop("partner_go_manage", None)
+        st.markdown(
+            """
+            <script>
+            setTimeout(function(){
+              const tabs = Array.from(document.querySelectorAll('button[role="tab"]'));
+              const manage = tabs.find(el => el.innerText && el.innerText.trim().toLowerCase().includes('manage'));
+              if (manage) { manage.click(); }
+            }, 50);
+            </script>
+            """,
+            unsafe_allow_html=True,
+        )
 
     # Tabs: Add, Manage, View
     tab_add, tab_manage, tab_view = st.tabs(["Add", "Manage", "View"])
@@ -3598,16 +3642,27 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             return None
 
     def list_all_tds():
-        """Return list of chemical types to select from."""
+        """Return list of products (name/category) that have a TDS uploaded, including file name/url."""
         try:
-            # Using chemical_types as the source of selectable items
-            res = supabase.table("chemical_types").select("id,name,category").order("category").order("name").execute()
-            items = res.data or []
-            # Normalize keys to what downstream expects
-            for it in items:
-                it["product_type"] = it.get("name")  # reuse field name
-                it["tds_file_url"] = None
-                it["name"] = it.get("name")
+            res = supabase.table("tds_data").select("id,chemical_type_id,brand,grade,metadata").order("created_at", desc=True).execute()
+            rows = res.data or []
+            items = []
+            for r in rows:
+                meta = r.get("metadata") or {}
+                # Only include when a TDS file URL exists
+                if not meta.get("tds_file_url"):
+                    continue
+                items.append({
+                    "id": r.get("id"),  # tds record id (for unique widget keys)
+                    "chemical_type_id": r.get("chemical_type_id"),
+                    "name": meta.get("product_name") or meta.get("generic_product_name") or (r.get("brand") or "Unnamed"),
+                    "category": meta.get("category") or "Others",
+                    "brand": r.get("brand"),
+                    "tds_file_url": meta.get("tds_file_url"),
+                    "tds_file_name": meta.get("tds_file_name"),
+                })
+            # Sort by category then name for stable UI
+            items.sort(key=lambda x: (x.get("category") or "", x.get("name") or ""))
             return items
         except Exception as e:
             st.error(f"Failed to fetch list: {e}")
@@ -3634,16 +3689,22 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                     items = types.get("types", [])
                     for rec in items:
                         key_yes = f"partner_select_{rec['id']}"
+                        label = rec.get('name') or 'Unnamed'
                         checked = st.radio(
-                            f"{rec.get('name')}",
+                            f"{label}",
                             options=["No", "Yes"],
                             index=0,
                             horizontal=True,
                             key=key_yes,
                         )
+                        # Show TDS file name/link under each option
+                        if rec.get("tds_file_url"):
+                            st.caption(f"TDS: {rec.get('tds_file_name') or 'file'}  •  [Download]({rec.get('tds_file_url')})")
+                        else:
+                            st.caption("TDS: Not available")
                         if checked == "Yes":
                             selected_list.append({
-                                "chemical_type_id": rec.get("id"),
+                                "chemical_type_id": rec.get("chemical_type_id"),
                                 "name": rec.get("name"),
                                 "category": rec.get("category"),
                             })
@@ -3655,6 +3716,7 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                 resp = create_partner(partner_name, partner_country, selected_list)
                 if resp is not None:
                     st.success("✅ Partner saved")
+                    st.session_state["partner_go_manage"] = True
                     st.rerun()
 
     with tab_manage:
@@ -3666,14 +3728,36 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             for p in partners:
                 pid = p.get("id")
                 with st.expander(f"🤝 {p.get('partner')} ({p.get('partner_country')})", expanded=False):
-                    col1, col2, col3 = st.columns([3,2,1])
+                    col1, col2 = st.columns([3,2])
                     with col1:
                         e_name = st.text_input("Partner", value=p.get("partner", ""), key=f"pn_{pid}")
                     with col2:
                         e_country = st.text_input("Country", value=p.get("partner_country", ""), key=f"pc_{pid}")
-                    with col3:
-                        st.write("")
-                        st.write("")
+
+                    # (Actions moved under TDS-backed Products below)
+
+                    st.markdown("---")
+                    st.subheader("TDS-backed Products")
+                    tds_records_all = list_all_tds()
+                    if not tds_records_all:
+                        st.caption("No TDS products found.")
+                    else:
+                        by_cat_ro: dict[str, list[dict]] = {}
+                        for r in tds_records_all:
+                            by_cat_ro.setdefault(r.get("category"), []).append(r)
+                        for cat, items in by_cat_ro.items():
+                            with st.expander(f"📁 {cat}", expanded=False):
+                                for rec in items:
+                                    st.write(rec.get("name") or "Unnamed")
+                                    if rec.get("tds_file_url"):
+                                        st.caption(f"TDS: {rec.get('tds_file_name') or 'file'}  •  [Download]({rec.get('tds_file_url')})")
+                                    else:
+                                        st.caption("TDS: Not available")
+
+                    # Compact action buttons placed under TDS-backed Products
+                    st.markdown('<div class="partner-actions partner-actions-cta">', unsafe_allow_html=True)
+                    btn_col1, btn_col2 = st.columns([1,1])
+                    with btn_col1:
                         if st.button("💾 Save", key=f"ps_{pid}"):
                             if not e_name.strip() or not e_country.strip():
                                 st.error("Name and country cannot be empty")
@@ -3681,10 +3765,12 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                                 update_partner(pid, {"partner": e_name.strip(), "partner_country": e_country.strip()})
                                 st.success("Updated")
                                 st.rerun()
+                    with btn_col2:
                         if st.button("🗑️ Delete", key=f"pd_{pid}"):
                             delete_partner(pid)
                             st.success("Deleted")
                             st.rerun()
+                    st.markdown('</div>', unsafe_allow_html=True)
 
     with tab_view:
         st.subheader("View Partners")
@@ -3692,12 +3778,123 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
         if not partners:
             st.info("No partners found")
         else:
+            # Fetch all TDS once for matching
             try:
-                import pandas as pd
-                df = pd.DataFrame([{ "Partner": p.get("partner"), "Country": p.get("partner_country") } for p in partners])
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                tds_records_all = supabase.table("tds_data").select("id,brand,metadata,chemical_type_id").execute().data or []
             except Exception:
-                for p in partners:
-                    st.write(f"- {p.get('partner')} — {p.get('partner_country')}")
+                tds_records_all = []
+            # Index by chemical_type_id for quick partner links resolution
+            tds_by_type: dict[str, list[dict]] = {}
+            try:
+                for _tds in tds_records_all:
+                    _ctid = (_tds.get("chemical_type_id") or "").strip()
+                    if not _ctid:
+                        continue
+                    tds_by_type.setdefault(_ctid, []).append(_tds)
+            except Exception:
+                tds_by_type = {}
+
+            # Simple view-only list of partners with their TDS-backed products
+            for p in partners:
+                pname = (p.get("partner") or "").strip()
+                pcountry = (p.get("partner_country") or "").strip()
+                pname_l = pname.lower()
+                # Build robust tokens for matching (strip parentheses/punctuation)
+                import re as _re_pv
+                _base_name = _re_pv.sub(r"\(.*?\)", "", pname_l)  # remove parenthetical e.g., (china)
+                _base_name = _re_pv.sub(r"[^a-z0-9\s]", " ", _base_name)
+                partner_tokens = [t for t in _base_name.split() if len(t) >= 3]
+
+                # Prefer explicit TDS-backed products stored on partner record
+                partner_products = (
+                    p.get("tds_products")
+                    or p.get("products")
+                    or (p.get("metadata") or {}).get("tds_products")
+                    or []
+                )
+
+                matched: list[dict] = []
+                if isinstance(partner_products, list) and partner_products:
+                    for it in partner_products:
+                        try:
+                            if not isinstance(it, dict):
+                                continue
+                            ct_id = (it.get("chemical_type_id") or it.get("type_id") or "").strip()
+                            if ct_id and ct_id in tds_by_type:
+                                for tds in tds_by_type.get(ct_id) or []:
+                                    meta = tds.get("metadata") or {}
+                                    matched.append({
+                                        "name": meta.get("product_name") or meta.get("generic_product_name") or (tds.get("brand") or "Unnamed"),
+                                        "category": meta.get("category") or "Others",
+                                        "tds_file_url": meta.get("tds_file_url"),
+                                        "tds_file_name": meta.get("tds_file_name"),
+                                    })
+                            else:
+                                # Fallback by name if provided
+                                nm = (it.get("name") or "").strip().lower()
+                                if nm:
+                                    for tds in tds_records_all:
+                                        meta = tds.get("metadata") or {}
+                                        hay = " ".join([
+                                            str(meta.get("product_name") or ""),
+                                            str(meta.get("generic_product_name") or ""),
+                                            str(tds.get("brand") or ""),
+                                        ]).lower()
+                                        if nm in hay:
+                                            matched.append({
+                                                "name": meta.get("product_name") or meta.get("generic_product_name") or (tds.get("brand") or "Unnamed"),
+                                                "category": meta.get("category") or "Others",
+                                                "tds_file_url": meta.get("tds_file_url"),
+                                                "tds_file_name": meta.get("tds_file_name"),
+                                            })
+                        except Exception:
+                            continue
+                else:
+                    # Fallback: match TDS by supplier/brand using robust token matching
+                    for tds in tds_records_all:
+                        meta = tds.get("metadata") or {}
+                        supplier = (meta.get("supplier_name") or "").strip().lower()
+                        brand = (tds.get("brand") or "").strip().lower()
+                        hay = f"{supplier} {brand}"
+                        hay_norm = _re_pv.sub(r"[^a-z0-9\s]", " ", hay)
+                        if pname_l and (pname_l in hay_norm):
+                            cond = True
+                        else:
+                            # token membership
+                            cond = any(t in hay_norm for t in partner_tokens)
+                        if cond:
+                            matched.append({
+                                "name": meta.get("product_name") or meta.get("generic_product_name") or (tds.get("brand") or "Unnamed"),
+                                "category": meta.get("category") or "Others",
+                                "tds_file_url": meta.get("tds_file_url"),
+                                "tds_file_name": meta.get("tds_file_name"),
+                            })
+
+                with st.expander(f"🤝 {pname} ({pcountry})", expanded=False):
+                    # Header info (view-only)
+                    cols = st.columns([3,2])
+                    with cols[0]:
+                        st.markdown(f"**Partner:** {pname or '-'}")
+                    with cols[1]:
+                        st.markdown(f"**Country:** {pcountry or '-'}")
+
+                    st.markdown("---")
+                    st.subheader("TDS-backed Products")
+                    # Mirror Manage Partners logic: show all TDS-backed products grouped by category
+                    tds_records_all_view = list_all_tds()
+                    if not tds_records_all_view:
+                        st.caption("No TDS products found.")
+                    else:
+                        by_cat_ro: dict[str, list[dict]] = {}
+                        for r in tds_records_all_view:
+                            by_cat_ro.setdefault(r.get("category"), []).append(r)
+                        for cat, items in by_cat_ro.items():
+                            with st.expander(f"📁 {cat}", expanded=False):
+                                for rec in items:
+                                    st.write(rec.get("name") or "Unnamed")
+                                    if rec.get("tds_file_url"):
+                                        st.caption(f"TDS: {rec.get('tds_file_name') or 'file'}  •  [Download]({rec.get('tds_file_url')})")
+                                    else:
+                                        st.caption("TDS: Not available")
 
     st.markdown('</div>', unsafe_allow_html=True)
