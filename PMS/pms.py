@@ -3715,8 +3715,8 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             unsafe_allow_html=True,
         )
 
-    # Tabs: Add, Manage, View
-    tab_add, tab_manage, tab_view = st.tabs(["Add", "Manage", "View"])
+    # Tabs: Add Partner, Add Chemical, Manage, View
+    tab_add_partner, tab_add_chemical, tab_manage, tab_view = st.tabs(["Add Partner", "Add Chemical", "Manage", "View"])
 
     # Helpers for partner_data
     def fetch_partners():
@@ -3782,7 +3782,86 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             st.error(f"Failed to fetch list: {e}")
             return []
 
-    with tab_add:
+    def _ensure_chemical_type(name: str, category: str) -> str | None:
+        """Find or create a chemical_types row by name and category; return id."""
+        try:
+            nm = (name or "").strip()
+            cat = (category or "").strip() or "Others"
+            if not nm:
+                return None
+            # Try find existing
+            res = supabase.table("chemical_types").select("id").eq("name", nm).eq("category", cat).limit(1).execute()
+            rows = res.data or []
+            if rows:
+                return rows[0].get("id")
+            # Create minimal record
+            payload = {"name": nm, "category": cat, "metadata": {}}
+            ins = supabase.table("chemical_types").insert(payload).execute()
+            # Fetch id from insert result
+            newid = None
+            try:
+                newid = ((ins.data or [{}])[0] or {}).get("id")
+            except Exception:
+                newid = None
+            if not newid:
+                # Last resort: re-query
+                res2 = supabase.table("chemical_types").select("id").eq("name", nm).eq("category", cat).limit(1).execute()
+                rows2 = res2.data or []
+                if rows2:
+                    newid = rows2[0].get("id")
+            return newid
+        except Exception:
+            return None
+
+    def partner_get_products(partner_row: dict) -> list[dict]:
+        """Return assigned products from whichever column exists.
+        Checks: 'tds_products', then 'products', then 'metadata.tds_products'.
+        """
+        try:
+            if isinstance(partner_row.get("tds_products"), list):
+                return partner_row.get("tds_products") or []
+        except Exception:
+            pass
+        try:
+            if isinstance(partner_row.get("products"), list):
+                return partner_row.get("products") or []
+        except Exception:
+            pass
+        try:
+            md = partner_row.get("metadata") or {}
+            if isinstance(md.get("tds_products"), list):
+                return md.get("tds_products") or []
+        except Exception:
+            pass
+        return []
+
+    def partner_set_products(partner_id: str, products: list[dict]) -> None:
+        """Persist assigned products into a column that exists.
+        Tries 'tds_products' then 'products'. Falls back to 'metadata' only if available.
+        """
+        # Try tds_products JSON column
+        try:
+            supabase.table("partner_data").update({"tds_products": products}).eq("id", partner_id).execute()
+            return
+        except Exception:
+            pass
+        # Try products JSON column
+        try:
+            supabase.table("partner_data").update({"products": products}).eq("id", partner_id).execute()
+            return
+        except Exception:
+            pass
+        # Last resort: metadata JSON
+        try:
+            curr = supabase.table("partner_data").select("metadata").eq("id", partner_id).limit(1).execute()
+            curr_meta = ((curr.data or [{}])[0] or {}).get("metadata") or {}
+            curr_meta["tds_products"] = products
+            supabase.table("partner_data").update({"metadata": curr_meta}).eq("id", partner_id).execute()
+        except Exception:
+            # Silently ignore; UI will still continue
+            pass
+
+    with tab_add_partner:
         st.subheader("Add Partner")
         partner_name = st.text_input("Partner Name *")
         # Country dropdown (ISO list)
@@ -3809,48 +3888,15 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe"
         ]
         partner_country = st.selectbox("Partner Country *", COUNTRIES)
+        # Add Partner is now only for creating the partner record
         st.markdown("---")
-        st.subheader("Which chemical types")
-        st.caption("Tick Yes for chemical types this partner supplies or relates to.")
-
-        tds_records = list_all_tds()
-        selected_list: list[dict] = []
-        if not tds_records:
-            st.info("No TDS records found.")
-        else:
-            by_cat: dict[str, dict[str, list[dict]]] = {}
-            for r in tds_records:
-                by_cat.setdefault(r.get("category"), {}).setdefault("types", []).append(r)
-            for cat, types in by_cat.items():
-                with st.expander(f"📁 {cat}", expanded=False):
-                    items = types.get("types", [])
-                    for rec in items:
-                        key_yes = f"partner_select_{rec['id']}"
-                        label = rec.get('name') or 'Unnamed'
-                        checked = st.radio(
-                            f"{label}",
-                            options=["No", "Yes"],
-                            index=0,
-                            horizontal=True,
-                            key=key_yes,
-                        )
-                        # Show TDS file name/link under each option
-                        if rec.get("tds_file_url"):
-                            st.caption(f"TDS: {rec.get('tds_file_name') or 'file'}  •  [Download]({rec.get('tds_file_url')})")
-                        else:
-                            st.caption("TDS: Not available")
-                        if checked == "Yes":
-                            selected_list.append({
-                                "chemical_type_id": rec.get("chemical_type_id"),
-                                "name": rec.get("name"),
-                                "category": rec.get("category"),
-                            })
+        st.caption("Fill in partner info and save. Assign chemicals in the 'Add Chemical' tab.")
 
         if st.button("Save Partner", type="primary"):
             if not (partner_name and partner_country):
                 st.error("Partner name and country are required")
             else:
-                resp = create_partner(partner_name, partner_country, selected_list)
+                resp = create_partner(partner_name, partner_country, [])
                 if resp is not None:
                     st.success("✅ Partner saved")
                     # Reset Add Partner form back to defaults
@@ -3863,6 +3909,53 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                         pass
                     # Return to Add tab (keep same tab)
                     st.rerun()
+
+    with tab_add_chemical:
+        st.subheader("Add Chemical to Partner")
+        partners = fetch_partners()
+        if not partners:
+            st.info("No partners found. Please add a partner first in 'Add Partner'.")
+        else:
+            partner_labels = {f"{p.get('partner')} ({p.get('partner_country')})": p for p in partners}
+            sel_label = st.selectbox("Select Partner", list(partner_labels.keys()))
+            partner_obj = partner_labels.get(sel_label)
+            tds_records = list_all_tds()
+            if not tds_records:
+                st.info("No TDS-backed chemicals found. Upload TDS in the TDS Master Data module.")
+            else:
+                # Build label → id map as "Product Type — Brand — Product"
+                options_map = {}
+                for r in tds_records:
+                    meta = r
+                    label = f"{meta.get('name') or 'Unnamed'} — {meta.get('category') or 'Others'}"
+                    # Prefer showing Product Type — Brand
+                    label = f"{meta.get('name') or 'Unnamed'}"
+                    options_map[f"{label}"] = r.get('id')
+                existing = partner_get_products(partner_obj)
+                already_ids = {item.get('tds_id') for item in existing if isinstance(item, dict)}
+                st.markdown("**Select chemicals (with TDS) to assign**")
+                sel_labels = st.multiselect(
+                    "Chemicals",
+                    options=list(options_map.keys()),
+                )
+                if st.button("Assign to Partner", type="primary"):
+                    to_add = []
+                    for lb in sel_labels:
+                        tid = options_map.get(lb)
+                        if not tid or tid in already_ids:
+                            continue
+                        rec = next((r for r in tds_records if r.get('id') == tid), None)
+                        if not rec:
+                            continue
+                        to_add.append({
+                            "tds_id": rec.get("id"),
+                            "chemical_type_id": rec.get("chemical_type_id"),
+                            "name": rec.get("name"),
+                            "category": rec.get("category"),
+                        })
+                    new_list = existing + to_add
+                    partner_set_products(partner_obj.get("id"), new_list)
+                    st.success("Assigned chemicals to partner")
 
     with tab_manage:
         st.subheader("Manage Partners")
@@ -3882,23 +3975,70 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                     # (Actions moved under TDS-backed Products below)
 
                     st.markdown("---")
-                    st.subheader("TDS-backed Products")
-                    tds_records_all = list_all_tds()
-                    if not tds_records_all:
-                        st.caption("No TDS products found.")
+                    st.subheader("Assigned TDS-backed Products")
+                    assigned = partner_get_products(p)
+                    if not assigned:
+                        st.caption("No chemicals assigned to this partner.")
                     else:
+                        # Group by category for display
                         by_cat_ro: dict[str, list[dict]] = {}
-                        for r in tds_records_all:
-                            by_cat_ro.setdefault(r.get("category"), []).append(r)
+                        for r in assigned:
+                            by_cat_ro.setdefault(r.get("category") or "Others", []).append(r)
                         for cat, items in by_cat_ro.items():
                             with st.expander(f"📁 {cat}", expanded=False):
                                 for rec in items:
                                     st.write(rec.get("name") or "Unnamed")
-                                    if rec.get("tds_file_url"):
-                                        st.caption(f"TDS: {rec.get('tds_file_name') or 'file'}  •  [Download]({rec.get('tds_file_url')})")
-                                    else:
-                                        st.caption("TDS: Not available")
 
+                    # 2) Remove link(s) from already linked TDS
+                    if assigned:
+                        st.markdown("**Remove linked chemicals**")
+                        # build label -> index mapping for assigned
+                        rem_labels_map = {}
+                        for idx, rec in enumerate(assigned):
+                            label = rec.get("name") or f"Item {idx+1}"
+                            rem_labels_map[f"{label}"] = idx
+                        to_remove_labels = st.multiselect(
+                            "Select assigned items to remove",
+                            list(rem_labels_map.keys()),
+                            key=f"rem_{pid}"
+                        )
+                        if st.button("Remove Selected", key=f"btn_rem_{pid}"):
+                            keep = []
+                            drop_indices = {rem_labels_map[lbl] for lbl in to_remove_labels}
+                            for idx, rec in enumerate(assigned):
+                                if idx not in drop_indices:
+                                    keep.append(rec)
+                            partner_set_products(pid, keep)
+                            st.success("Removed selected links")
+                            st.rerun()
+
+                    # Add additional chemicals to this partner
+                    st.markdown("---")
+                    st.subheader("Add Additional Chemical TDS")
+                    tds_records_all = list_all_tds()
+                    # 3) Only show unlinked TDS for adding
+                    current_ids = {it.get('tds_id') for it in assigned if isinstance(it, dict)}
+                    unlinked = [r for r in tds_records_all if r.get('id') not in current_ids]
+                    opts = {f"{r.get('name') or 'Unnamed'}": r.get('id') for r in unlinked}
+                    add_labels = st.multiselect("Select chemicals to add", list(opts.keys()), key=f"add_more_{pid}")
+                    if st.button("Add Selected", key=f"btn_add_more_{pid}"):
+                        add_items = []
+                        for lb in add_labels:
+                            tid = opts.get(lb)
+                            if tid in current_ids:
+                                continue
+                            rec = next((r for r in tds_records_all if r.get('id') == tid), None)
+                            if rec:
+                                add_items.append({
+                                    "tds_id": rec.get("id"),
+                                    "chemical_type_id": rec.get("chemical_type_id"),
+                                    "name": rec.get("name"),
+                                    "category": rec.get("category"),
+                                })
+                        new_list = assigned + add_items
+                        partner_set_products(pid, new_list)
+                        st.success("Added")
+                        st.rerun()
                     # Compact action buttons placed under TDS-backed Products
                     st.markdown('<div class="partner-actions partner-actions-cta">', unsafe_allow_html=True)
                     btn_col1, btn_col2 = st.columns([1,1])
