@@ -4165,6 +4165,13 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
         else:
             # Track which partner is open; ensure only one expander open at a time
             open_partner_id = st.session_state.get("partner_view_open_id")
+            # Default to first partner open if none selected yet
+            try:
+                if open_partner_id is None and partners:
+                    st.session_state["partner_view_open_id"] = partners[0].get("id")
+                    open_partner_id = st.session_state["partner_view_open_id"]
+            except Exception:
+                pass
             # Fetch all TDS once for matching
             try:
                 tds_records_all = supabase.table("tds_data").select("id,brand,metadata,chemical_type_id").execute().data or []
@@ -4276,23 +4283,19 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                         st.markdown(f"**Country:** {pcountry or '-'}")
 
                     st.markdown("---")
-                    st.subheader("TDS-backed Products")
-                    # Mirror Manage Partners logic: show all TDS-backed products grouped by category
-                    tds_records_all_view = list_all_tds()
-                    if not tds_records_all_view:
-                        st.caption("No TDS products found.")
+                    st.subheader("Assigned TDS-backed Products")
+                    # Show only chemicals assigned to this partner (like Manage)
+                    assigned_view = partner_get_products(p)
+                    if not assigned_view:
+                        st.caption("No chemicals assigned to this partner.")
                     else:
                         by_cat_ro: dict[str, list[dict]] = {}
-                        for r in tds_records_all_view:
-                            by_cat_ro.setdefault(r.get("category"), []).append(r)
+                        for r in assigned_view:
+                            by_cat_ro.setdefault(r.get("category") or "Others", []).append(r)
                         for cat, items in by_cat_ro.items():
                             with st.expander(f"📁 {cat}", expanded=False):
                                 for rec in items:
-                                    st.write(rec.get("name") or "Unnamed")
-                                    if rec.get("tds_file_url"):
-                                        st.caption(f"TDS: {rec.get('tds_file_name') or 'file'}  •  [Download]({rec.get('tds_file_url')})")
-                                    else:
-                                        st.caption("TDS: Not available")
+                                    st.markdown(f"- {rec.get('name') or 'Unnamed'}")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
