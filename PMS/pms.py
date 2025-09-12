@@ -2780,7 +2780,14 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                     st.session_state[f"editing_{tid}"] = True
 
                             if st.session_state.get(f"editing_{tid}"):
-                                with st.expander(f"Edit: {metadata.get('product_name', 'Unknown Product')}", expanded=True):
+                                # Use a refresh token to force expander identity change and collapse after save/cancel
+                                _tds_refresh_token = st.session_state.get("tds_manage_refresh_token", "")
+                                try:
+                                    _nzw_t = ((sum(ord(ch) for ch in _tds_refresh_token) % 5) + 1) if _tds_refresh_token else 0
+                                except Exception:
+                                    _nzw_t = 0
+                                _zw_sfx_t = "\u200B" * _nzw_t if _nzw_t else ""
+                                with st.expander(f"Edit: {metadata.get('product_name', 'Unknown Product')}{_zw_sfx_t}", expanded=True):
                                     # Editable fields for TDS data
                                     ename = st.text_input("Product Name", value=metadata.get("product_name", ""), key=f"n_{tid}")
                                     ecat = st.selectbox("Category", FIXED_CATEGORIES, index=FIXED_CATEGORIES.index(metadata.get("category", "Others")), key=f"c_{tid}")
@@ -2946,6 +2953,8 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                     supabase.table("tds_data").update(tds_updates).eq("id", tid).execute()
                                                     st.success("✅ TDS record updated")
                                                     st.session_state.pop(f"editing_{tid}", None)
+                                                    # Bump token so the expander resets on rerun
+                                                    st.session_state["tds_manage_refresh_token"] = str(uuid.uuid4())
                                                     st.rerun()
                                                 except Exception as e:
                                                     st.error(f"Failed to update: {e}")
@@ -2953,6 +2962,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                     with ac2:
                                         if st.button("❌ Cancel", key=f"cancel_{tid}"):
                                             st.session_state.pop(f"editing_{tid}", None)
+                                            st.session_state["tds_manage_refresh_token"] = str(uuid.uuid4())
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -3117,14 +3127,11 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                 st.write(f"**Packaging Size & Type:** {metadata.get('packaging_size_type', 'N/A')}")
                                 st.write(f"**Net Weight:** {_net_w}")
                                 
-                                # Technical Specification
+                                # Technical Specification (render as normal text to keep consistent font)
                                 tech_spec = metadata.get("technical_spec") or _specs_src.get("technical_specification") or _specs_src.get("technical_spec")
                                 if tech_spec:
                                     st.markdown("**Technical Specification:**")
-                                    try:
-                                        st.code(tech_spec, language="text")
-                                    except Exception:
-                                        st.markdown(f"```text\n{tech_spec}\n```")
+                                    st.text(tech_spec)
                                 
                                 # TDS Information
                                 st.markdown("**Technical Data Sheet**")
@@ -3542,7 +3549,14 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
 
             for chem in filtered_chems:
                 cid = chem.get("id")
-                with st.expander(f"🧪 {chem.get('generic_name')}", expanded=False):
+                # Expander reset suffix to force collapse after save via refresh token
+                _chem_refresh_token = st.session_state.get("chem_manage_refresh_token", "")
+                try:
+                    _nzw = ((sum(ord(ch) for ch in _chem_refresh_token) % 5) + 1) if _chem_refresh_token else 0
+                except Exception:
+                    _nzw = 0
+                _zw_suffix = "\u200B" * _nzw if _nzw else ""
+                with st.expander(f"🧪 {chem.get('generic_name')}{_zw_suffix}", expanded=False):
                     ec1, ec2 = st.columns(2)
                     with ec1:
                         ename = st.text_input("Generic Name", value=chem.get("generic_name", ""), key=f"cn_{cid}")
@@ -3621,6 +3635,8 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                                     }
                                     update_chemical(cid, updates)
                                     st.success("✅ Updated")
+                                    # Bump token so the expander identity changes and collapses on rerun
+                                    st.session_state["chem_manage_refresh_token"] = str(uuid.uuid4())
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Failed to update: {e}")
@@ -3629,6 +3645,7 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                             try:
                                 delete_chemical(cid)
                                 st.success("Deleted")
+                                st.session_state["chem_manage_refresh_token"] = str(uuid.uuid4())
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Failed to delete: {e}")
@@ -3759,8 +3776,38 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             st.error(f"Failed to fetch partners: {e}")
             return []
 
+    def _normalize_partner_name(name: str) -> str:
+        try:
+            return (name or "").strip().lower()
+        except Exception:
+            return name or ""
+
+    def partner_exists(partner: str, country: str | None = None) -> bool:
+        """Return True if a partner with same name (case-insensitive) and optional country exists."""
+        try:
+            pname = _normalize_partner_name(partner)
+            if not pname:
+                return False
+            rows = supabase.table("partner_data").select("id,partner,partner_country").execute().data or []
+            for r in rows:
+                rn = _normalize_partner_name(r.get("partner") or "")
+                if rn != pname:
+                    continue
+                if country is None:
+                    return True
+                rc = (r.get("partner_country") or "").strip().lower()
+                if rc == (country or "").strip().lower():
+                    return True
+            return False
+        except Exception:
+            return False
+
     def create_partner(partner: str, country: str, selected_products: list[dict]):
         try:
+            # Prevent duplicate partner by name+country
+            if partner_exists(partner, country):
+                st.error("Partner already exists with the same name and country")
+                return None
             payload = {
                 # id generated by DB default
                 "partner": (partner or "").strip(),
@@ -3948,6 +3995,8 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
         if st.button("Save Partner", type="primary"):
             if not (partner_name and partner_country):
                 st.error("Partner name and country are required")
+            elif partner_exists(partner_name, partner_country):
+                st.error("Partner already exists with the same name and country")
             else:
                 resp = create_partner(partner_name, partner_country, [])
                 if resp is not None:
@@ -4095,6 +4144,8 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                         if st.button("💾 Save", key=f"ps_{pid}"):
                             if not e_name.strip() or not e_country.strip():
                                 st.error("Name and country cannot be empty")
+                            elif partner_exists(e_name, e_country) and _normalize_partner_name(e_name) != _normalize_partner_name(p.get("partner") or ""):
+                                st.error("Another partner already exists with the same name and country")
                             else:
                                 update_partner(pid, {"partner": e_name.strip(), "partner_country": e_country.strip()})
                                 st.success("Updated")
@@ -4112,6 +4163,8 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
         if not partners:
             st.info("No partners found")
         else:
+            # Track which partner is open; ensure only one expander open at a time
+            open_partner_id = st.session_state.get("partner_view_open_id")
             # Fetch all TDS once for matching
             try:
                 tds_records_all = supabase.table("tds_data").select("id,brand,metadata,chemical_type_id").execute().data or []
@@ -4204,7 +4257,17 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                                 "tds_file_name": meta.get("tds_file_name"),
                             })
 
-                with st.expander(f"🤝 {pname} ({pcountry})", expanded=False):
+                is_open = (p.get("id") == open_partner_id)
+                # Controls to open/close this partner view
+                colpv1, colpv2 = st.columns([1,6])
+                with colpv1:
+                    if not is_open and st.button("👁️ View", key=f"pv_open_{p.get('id')}"):
+                        st.session_state["partner_view_open_id"] = p.get("id")
+                        st.rerun()
+                    if is_open and st.button("🔒 Close", key=f"pv_close_{p.get('id')}"):
+                        st.session_state.pop("partner_view_open_id", None)
+                        st.rerun()
+                with st.expander(f"🤝 {pname} ({pcountry})", expanded=is_open):
                     # Header info (view-only)
                     cols = st.columns([3,2])
                     with cols[0]:
