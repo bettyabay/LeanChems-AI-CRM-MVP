@@ -1324,6 +1324,30 @@ def upload_supporting_doc(uploaded_file, tds_id: str):
     public_url = f"https://{SUPABASE_URL.split('//')[1]}/storage/v1/object/public/product-documents/{key}"
     return public_url, uploaded_file.name, uploaded_file.size, ext.upper()
 
+# ------------------
+# Global session-state reset helpers (used across modules)
+# ------------------
+def _reset_session_keys(keys: list[str]):
+    try:
+        for k in keys:
+            try:
+                st.session_state.pop(k, None)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+def _reset_session_by_prefix(prefixes: list[str]):
+    try:
+        for k in list(st.session_state.keys()):
+            if any(k.startswith(pfx) for pfx in prefixes):
+                try:
+                    st.session_state.pop(k, None)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
 def name_exists(name: str) -> bool:
     res = supabase.table("chemical_types").select("id").eq("name", name.strip()).limit(1).execute()
     return bool(res.data)
@@ -4314,6 +4338,17 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
             _tds_placeholder = "— Select —"
             _tds_labels = [_tds_placeholder] + list(tds_opts.keys()) if tds_opts else [_tds_placeholder]
             sel_tds_label = st.selectbox("Select TDS", _tds_labels, index=0)
+
+        # Auto-clear pricing inputs when Partner or TDS selection changes
+        _prev_partner = st.session_state.get("pricing_prev_partner_label")
+        _prev_tds = st.session_state.get("pricing_prev_tds_label")
+        if sel_partner_label != _prev_partner or sel_tds_label != _prev_tds:
+            _reset_session_keys(["pricing_rows_add"]) 
+            _reset_session_by_prefix(["g_inc_","g_cu_","g_ce_","g_pu_","g_pe_","k_inc_","k_cu_","k_ce_","k_pu_","k_pe_"]) 
+            st.session_state["pricing_prev_partner_label"] = sel_partner_label
+            st.session_state["pricing_prev_tds_label"] = sel_tds_label
+            # Reinitialize default rows for fresh input after change
+            st.session_state["pricing_rows_add"] = _incoterm_rows_default()
 
         # Editable pricing table
         st.markdown("---")
