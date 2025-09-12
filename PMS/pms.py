@@ -2850,10 +2850,18 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                 st.error("Another product already uses this name")
                                             else:
                                                 # Build updates
+                                                def _strip_or_empty(v: str | None) -> str:
+                                                    try:
+                                                        return (v or "").strip()
+                                                    except Exception:
+                                                        return ""
+                                                def _strip_or_none(v: str | None):
+                                                    s = _strip_or_empty(v)
+                                                    return s if s else None
                                                 updates = {
-                                                    "name": ename.strip(),
+                                                    "name": _strip_or_empty(ename),
                                                     "category": ecat,
-                                                    "description": edesc or None,
+                                                    "description": _strip_or_none(edesc),
                                                     "is_leanchems_product": eleanchems,
                                                 }
 
@@ -2883,16 +2891,16 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                     # Update metadata
                                                     updated_metadata = metadata.copy()
                                                     updated_metadata.update({
-                                                        "product_name": ename.strip(),
+                                                        "product_name": _strip_or_empty(ename),
                                                         "category": ecat,
-                                                        "product_type": etype.strip(),
-                                                        "generic_product_name": egenname.strip() or None,
-                                                        "trade_name": etradename.strip() or None,
-                                                        "supplier_name": esupplier.strip() or None,
-                                                        "packaging_size_type": epackaging.strip() or None,
-                                                        "net_weight": enetweight.strip() or None,
-                                                        "technical_spec": etspec.strip() or None,
-                                                        "description": edesc.strip() or None,
+                                                        "product_type": _strip_or_empty(etype),
+                                                        "generic_product_name": _strip_or_none(egenname),
+                                                        "trade_name": _strip_or_none(etradename),
+                                                        "supplier_name": _strip_or_none(esupplier),
+                                                        "packaging_size_type": _strip_or_none(epackaging),
+                                                        "net_weight": _strip_or_none(enetweight),
+                                                        "technical_spec": _strip_or_none(etspec),
+                                                        "description": _strip_or_none(edesc),
                                                         "is_leanchems_product": eleanchems,
                                                     })
                                                     # Bring through file-related updates into metadata for consistency
@@ -2904,10 +2912,10 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                     
                                                     # Update TDS record
                                                     tds_updates = {
-                                                        "brand": ebrand.strip() or None,
-                                                        "grade": egrade.strip() or None,
+                                                        "brand": _strip_or_none(ebrand),
+                                                        "grade": _strip_or_none(egrade),
                                                         "owner": eowner,
-                                                        "source": esource.strip() or None,
+                                                        "source": _strip_or_none(esource),
                                                         "metadata": updated_metadata
                                                     }
                                                     
