@@ -4344,7 +4344,8 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
         _prev_tds = st.session_state.get("pricing_prev_tds_label")
         if sel_partner_label != _prev_partner or sel_tds_label != _prev_tds:
             _reset_session_keys(["pricing_rows_add"]) 
-            _reset_session_by_prefix(["g_inc_","g_cu_","g_ce_","g_pu_","g_pe_","k_inc_","k_cu_","k_ce_","k_pu_","k_pe_"]) 
+            # Bump reset token so all widget keys change and state is flushed
+            st.session_state["pricing_form_reset_token"] = str(uuid.uuid4())
             st.session_state["pricing_prev_partner_label"] = sel_partner_label
             st.session_state["pricing_prev_tds_label"] = sel_tds_label
             # Reinitialize default rows for fresh input after change
@@ -4357,6 +4358,7 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
             st.session_state["pricing_rows_add"] = _incoterm_rows_default()
 
         rows = st.session_state["pricing_rows_add"]
+        _pricing_token = st.session_state.get("pricing_form_reset_token", "0")
         global_rows, kenya_rows, other_rows = _split_rows(rows)
 
         def _render_rows(prefix: str, rows_list: list[dict]):
@@ -4364,15 +4366,15 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
             for i, r in enumerate(rows_list):
                 c1, c2, c3, c4, c5 = st.columns([2,2,2,2,2])
                 with c1:
-                    st.text_input("Incoterm", value=r.get("incoterm", ""), key=f"{prefix}_inc_{i}")
+                    st.text_input("Incoterm", value=r.get("incoterm", ""), key=f"{prefix}_{_pricing_token}_inc_{i}")
                 with c2:
-                    st.text_input("Costing USD", value=r.get("cost_usd", ""), key=f"{prefix}_cu_{i}")
+                    st.text_input("Costing USD", value=r.get("cost_usd", ""), key=f"{prefix}_{_pricing_token}_cu_{i}")
                 with c3:
-                    st.text_input("Costing ETB", value=r.get("cost_etb", ""), key=f"{prefix}_ce_{i}")
+                    st.text_input("Costing ETB", value=r.get("cost_etb", ""), key=f"{prefix}_{_pricing_token}_ce_{i}")
                 with c4:
-                    st.text_input("Pricing USD", value=r.get("price_usd", ""), key=f"{prefix}_pu_{i}")
+                    st.text_input("Pricing USD", value=r.get("price_usd", ""), key=f"{prefix}_{_pricing_token}_pu_{i}")
                 with c5:
-                    st.text_input("Pricing ETB", value=r.get("price_etb", ""), key=f"{prefix}_pe_{i}")
+                    st.text_input("Pricing ETB", value=r.get("price_etb", ""), key=f"{prefix}_{_pricing_token}_pe_{i}")
 
         st.markdown("**Global Sourcing (FOB, CIF Mombasa, SEZ MCF)**")
         _render_rows("g", global_rows)
@@ -4386,11 +4388,11 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                 out = []
                 for i in range(len(lst)):
                     out.append({
-                        "incoterm": st.session_state.get(f"{prefix}_inc_{i}") or "",
-                        "cost_usd": st.session_state.get(f"{prefix}_cu_{i}") or "",
-                        "cost_etb": st.session_state.get(f"{prefix}_ce_{i}") or "",
-                        "price_usd": st.session_state.get(f"{prefix}_pu_{i}") or "",
-                        "price_etb": st.session_state.get(f"{prefix}_pe_{i}") or "",
+                        "incoterm": st.session_state.get(f"{prefix}_{_pricing_token}_inc_{i}") or "",
+                        "cost_usd": st.session_state.get(f"{prefix}_{_pricing_token}_cu_{i}") or "",
+                        "cost_etb": st.session_state.get(f"{prefix}_{_pricing_token}_ce_{i}") or "",
+                        "price_usd": st.session_state.get(f"{prefix}_{_pricing_token}_pu_{i}") or "",
+                        "price_etb": st.session_state.get(f"{prefix}_{_pricing_token}_pe_{i}") or "",
                     })
                 return out
             out_rows = _collect("g", global_rows) + _collect("k", kenya_rows)
@@ -4402,9 +4404,10 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                 resp = _pricing_table_add(pid, tid, out_rows)
                 if resp is not None:
                     st.success("✅ Pricing saved")
-                    # Reset add pricing session state
+                    # Reset add pricing session state and bump token so widgets clear
                     _reset_session_keys(["pricing_rows_add"]) 
-                    _reset_session_by_prefix(["g_inc_","g_cu_","g_ce_","g_pu_","g_pe_","k_inc_","k_cu_","k_ce_","k_pu_","k_pe_"])
+                    st.session_state["pricing_form_reset_token"] = str(uuid.uuid4())
+                    st.session_state["pricing_rows_add"] = _incoterm_rows_default()
                     st.rerun()
 
     # Manage
@@ -4420,6 +4423,15 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                     _partners_map[p.get("id")] = p.get("partner")
             except Exception:
                 _partners_map = {}
+            # Build tds id -> product code (product_name) map
+            _tds_name_map = {}
+            try:
+                _tds_rows = supabase.table("tds_data").select("id,metadata").execute().data or []
+                for _r in _tds_rows:
+                    _mid = (_r or {}).get("metadata") or {}
+                    _tds_name_map[_r.get("id")] = _mid.get("product_name") or _mid.get("generic_product_name")
+            except Exception:
+                _tds_name_map = {}
             for rec in records:
                 rid = rec.get("id")
                 partner_id = rec.get("partner_id")
@@ -4427,7 +4439,8 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                 rows = rec.get("rows") or _incoterm_rows_default()
 
                 _pname = _partners_map.get(partner_id, partner_id or "-")
-                with st.expander(f"Costing & Pricing — {_pname}", expanded=False):
+                _prod_code = _tds_name_map.get(tds_id) or "-"
+                with st.expander(f"Costing & Pricing — {_pname} — {_prod_code}", expanded=False):
                     # Split rows into groups
                     g_rows, k_rows, o_rows = _split_rows(rows)
 
@@ -4477,7 +4490,7 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                             st.success("Deleted")
                             st.rerun()
                     with mc3:
-                        st.caption(f"Partner ID: {partner_id}  •  TDS ID: {tds_id}")
+                        pass
 
     # View
     with tab_p_view:
@@ -4491,13 +4504,39 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                     _partners_map[p.get("id")] = p.get("partner")
             except Exception:
                 _partners_map = {}
+            # Build tds id -> product code (product_name) map
+            _tds_name_map_v = {}
+            try:
+                _tds_rows_v = supabase.table("tds_data").select("id,metadata").execute().data or []
+                for _r in _tds_rows_v:
+                    _mid = (_r or {}).get("metadata") or {}
+                    _tds_name_map_v[_r.get("id")] = _mid.get("product_name") or _mid.get("generic_product_name")
+            except Exception:
+                _tds_name_map_v = {}
             for rec in records:
                 rid = rec.get("id")
                 rows = rec.get("rows") or []
                 _pname = _partners_map.get(rec.get("partner_id"), rec.get("partner_id") or "-")
-                with st.expander(f"Costing & Pricing — {_pname}", expanded=False):
-                    st.caption("Incoterm | Costing USD | Costing ETB | Pricing USD | Pricing ETB")
-                    for r in rows:
-                        st.write(f"- {r.get('incoterm','')} | {r.get('cost_usd','')} | {r.get('cost_etb','')} | {r.get('price_usd','')} | {r.get('price_etb','')}")
+                _prod_code = _tds_name_map_v.get(rec.get("tds_id")) or "-"
+                with st.expander(f"Costing & Pricing — {_pname} — {_prod_code}", expanded=False):
+                    # Split rows similar to Manage view and show as read-only tables
+                    g_rows, k_rows, o_rows = _split_rows(rows)
+
+                    def _render_table(title: str, data_rows: list[dict]):
+                        st.markdown(f"**{title}**")
+                        if not data_rows:
+                            st.caption("No rows")
+                            return
+                        try:
+                            import pandas as _pd
+                            df = _pd.DataFrame(data_rows, columns=["incoterm","cost_usd","cost_etb","price_usd","price_etb"])  # type: ignore
+                            st.dataframe(df, use_container_width=True, hide_index=True)
+                        except Exception:
+                            st.caption("Incoterm | Costing USD | Costing ETB | Pricing USD | Pricing ETB")
+                            for r in data_rows:
+                                st.write(f"- {r.get('incoterm','')} | {r.get('cost_usd','')} | {r.get('cost_etb','')} | {r.get('price_usd','')} | {r.get('price_etb','')}")
+
+                    _render_table("Global Sourcing (FOB, CIF Mombasa, SEZ MCF)", g_rows)
+                    _render_table("Kenya Pricing & Costing (Nairobi, FCA, Addis)", k_rows)
 
     st.markdown('</div>', unsafe_allow_html=True)
