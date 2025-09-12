@@ -705,27 +705,27 @@ def _render_login_screen():
                             st.error("❌ Invalid login response")
                     except Exception as e:
                         st.error(f"❌ Login failed: {e}")
-    
-    # Offer to resend verification email when returning to login after signup
-    if st.session_state.get("pending_verify_email"):
-        pending_email = _sanitize_email(st.session_state.get("pending_verify_email"))
-        st.caption(f"A verification email was sent to {pending_email}. Not received?")
-        if st.button("Resend verification email", type="secondary"):
-            try:
-                if EMAIL_REDIRECT_URL:
-                    supabase.auth.resend({
-                        "type": "signup",
-                        "email": pending_email,
-                        "options": {"email_redirect_to": EMAIL_REDIRECT_URL}
-                    })
-                else:
-                    supabase.auth.resend({
-                        "type": "signup",
-                        "email": pending_email,
-                    })
-                st.success("✅ Verification email resent.")
-            except Exception as e:
-                st.error(f"❌ Failed to resend verification email: {e}")
+
+        # Offer to resend verification email when returning to login after signup
+        if st.session_state.get("pending_verify_email"):
+            pending_email = _sanitize_email(st.session_state.get("pending_verify_email"))
+            st.caption(f"A verification email was sent to {pending_email}. Not received?")
+            if st.button("Resend verification email", type="secondary"):
+                try:
+                    if EMAIL_REDIRECT_URL:
+                        supabase.auth.resend({
+                            "type": "signup",
+                            "email": pending_email,
+                            "options": {"email_redirect_to": EMAIL_REDIRECT_URL}
+                        })
+                    else:
+                        supabase.auth.resend({
+                            "type": "signup",
+                            "email": pending_email,
+                        })
+                    st.success("✅ Verification email resent.")
+                except Exception as e:
+                    st.error(f"❌ Failed to resend verification email: {e}")
     
     # System description with three key points
     st.markdown("""
@@ -1281,6 +1281,49 @@ def upload_tds_to_supabase(uploaded_file, product_id: str):
     public_url = f"https://{SUPABASE_URL.split('//')[1]}/storage/v1/object/public/product-documents/{key}"
     return public_url, uploaded_file.name, uploaded_file.size, ext.upper()
 
+def _storage_key_from_public_url(public_url: str) -> str | None:
+    """Extract storage object key from a public URL."""
+    try:
+        marker = "/storage/v1/object/public/product-documents/"
+        if marker in (public_url or ""):
+            return public_url.split(marker, 1)[1]
+        return None
+    except Exception:
+        return None
+
+def _delete_storage_object_by_url(public_url: str) -> bool:
+    """Best-effort delete of a storage object given its public URL."""
+    try:
+        key = _storage_key_from_public_url(public_url)
+        if not key:
+            return False
+        supabase.storage.from_("product-documents").remove([key])
+        return True
+    except Exception:
+        return False
+
+def upload_supporting_doc(uploaded_file, tds_id: str):
+    if not uploaded_file:
+        return None, None, None, None
+    ext = uploaded_file.name.split(".")[-1].lower()
+    content_types = {
+        "pdf": "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "doc": "application/msword",
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+    }
+    content_type = content_types.get(ext, "application/octet-stream")
+    key = f"supporting_docs/{tds_id}/{uuid.uuid4()}.{ext}"
+    supabase.storage.from_("product-documents").upload(
+        key,
+        uploaded_file.getvalue(),
+        {"content-type": content_type, "x-upsert": "true"}
+    )
+    public_url = f"https://{SUPABASE_URL.split('//')[1]}/storage/v1/object/public/product-documents/{key}"
+    return public_url, uploaded_file.name, uploaded_file.size, ext.upper()
+
 def name_exists(name: str) -> bool:
     res = supabase.table("chemical_types").select("id").eq("name", name.strip()).limit(1).execute()
     return bool(res.data)
@@ -1395,7 +1438,7 @@ def extract_tds_info_with_ai(text_content):
         """
         
         response = gemini_model.generate_content(prompt)
-        
+
         # Robustly extract text from candidates, handling safety blocks
         def _response_to_text(resp) -> str:
             try:
@@ -1660,12 +1703,15 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
 
     with st.container():
         st.subheader("Basic Information")
-        # Category select (selection only; no add)
-        category = st.selectbox(
+        # Category select (selection only; no add) with placeholder
+        _cat_placeholder = "— Select —"
+        _cat_options = [_cat_placeholder] + FIXED_CATEGORIES
+        _category_sel = st.selectbox(
             "Chemical Category *",
-            FIXED_CATEGORIES,
+            _cat_options,
             key="category_select"
         )
+        category = "" if _category_sel == _cat_placeholder else _category_sel
         # Reset type controls when category changes
         prev_cat = st.session_state.get("category_select_prev")
         if prev_cat != category:
@@ -1685,35 +1731,42 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         existing_types = get_types_for_category(category)
         type_options = existing_types
         if type_options:
-            selected_type = st.selectbox(
+            _type_placeholder = "— Select —"
+            _type_opts = [_type_placeholder] + type_options
+            _type_sel = st.selectbox(
                 "Product Type *",
-                options=type_options,
+                options=_type_opts,
                 key=f"type_select_{(category or 'none').replace(' ', '_').replace('&', 'and')}"
             )
+            selected_type = "" if _type_sel == _type_placeholder else _type_sel
         else:
             st.info("No mapped product types for this category in Chemical Master Data.")
             selected_type = ""
 
-        # Product Name after selecting category and type
-        name = st.text_input("Product Name *", placeholder="Unique product name")
+        # Product Code after selecting category and type
+        name = st.text_input("Product Code *", placeholder="Unique product code")
 
         description = st.text_area("Description", placeholder="Optional description", height=100)
 
         st.markdown("---")
         st.subheader("Product Status")
-        is_leanchems_product = st.selectbox(
+        _yn_placeholder = "— Select —"
+        _yn_sel = st.selectbox(
             "Is it Leanchems legacy/existing/coming product?",
-            ["Yes", "No"],
+            [_yn_placeholder, "Yes", "No"],
             index=0
         )
+        is_leanchems_product = None if _yn_sel == _yn_placeholder else _yn_sel
 
         st.markdown("---")
         st.subheader("Source of TDS")
-        tds_source = st.selectbox(
+        _src_placeholder = "— Select —"
+        _src_sel = st.selectbox(
             "Where did the TDS come from?",
-            ["Supplier", "Customer", "Competitor"],
+            [_src_placeholder, "Supplier", "Customer", "Competitor"],
             index=0
         )
+        tds_source = None if _src_sel == _src_placeholder else _src_sel
 
         st.markdown("---")
         st.subheader("Technical Data Sheet (TDS)")
@@ -1982,7 +2035,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                     if not ok_entity:
                         st.warning(f"Saved product, but failed to create sourcing entity: {err_entity}")
                     st.success("✅ Record saved successfully")
-                    # Clear Add TDS session artifacts and redirect to Manage TDS
+                    # Clear Add TDS session artifacts and redirect back to Add TDS
                     try:
                         for k in [
                             "extracted_tds_data",
@@ -1991,9 +2044,19 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                             "tds_hydrate_pending",
                             "tds_file_picker",
                             "category_select_prev",
+                            # Explicit input widget keys used in Add TDS
+                            "tds_generic_name",
+                            "tds_trade_name",
+                            "tds_supplier_name",
+                            "tds_packaging",
+                            "tds_net_weight",
+                            "tds_hs_code",
+                            "tds_tech_spec",
+                            # Selection keys
+                            "category_select",
                         ]:
                             st.session_state.pop(k, None)
-                        # Also clear dynamic type select key for previous category if exists
+                        # Also clear dynamic type select key for the selected category if exists
                         try:
                             _cat = category or st.session_state.get("category_select_prev") or ""
                             if _cat:
@@ -2001,7 +2064,8 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                 st.session_state.pop(f"type_select_{_key_base}", None)
                         except Exception:
                             pass
-                        st.session_state["sourcing_section"] = "manage"
+                        # Navigate back to Add tab
+                        st.session_state["sourcing_section"] = "add"
                     except Exception:
                         pass
                     st.rerun()
@@ -2601,7 +2665,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
     else:
         # Enhanced Filters
         st.subheader("📊 Filter TDS Records")
-        colf1, colf2, colf3, colf4 = st.columns([2, 2, 2, 1])
+        colf1, colf2, colf3 = st.columns([2, 2, 2])
         with colf1:
             filter_category = st.selectbox("Filter by Category", ["All"] + FIXED_CATEGORIES)
         with colf2:
@@ -2616,9 +2680,6 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         with colf3:
             # Owner Filter
             filter_owner = st.selectbox("Filter by Owner", ["All", "Supplier", "Customer", "Competitor"])
-        with colf4:
-            # Source Filter
-            filter_source = st.selectbox("Filter by Source", ["All", "TDS Upload", "Import Data", "Brochure"])
 
         # Search filter
         search = st.text_input("Search by product name/brand/supplier", placeholder="Start typing...")
@@ -2637,9 +2698,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             # Owner filter
             if filter_owner != "All" and tds.get("owner") != filter_owner:
                     continue
-            # Source filter
-            if filter_source != "All" and tds.get("source") != filter_source:
-                continue
+            # (Source filter removed)
             # Search filter
             if search:
                 search_text = " ".join([
@@ -2672,13 +2731,15 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             for cat, brands in by_cat.items():
                 with st.expander(f"📁 {cat}", expanded=True):
                     for brand, items in brands.items():
-                        st.markdown(f"**🏷️ {brand}** ({len(items)})")
                         for tds in items:
                             tid = tds["id"]
                             metadata = tds.get("metadata", {})
                             cols = st.columns([3, 2, 2, 2])
                             with cols[0]:
-                                st.write(f"• {metadata.get('product_name', 'Unknown Product')}")
+                                _ptype = metadata.get('product_type', '') or 'N/A'
+                                _brand = tds.get('brand', '') or 'N/A'
+                                st.markdown(f"**{_ptype} — {_brand}**")
+                                st.caption(f"Product: {metadata.get('product_name', 'Unknown Product')}")
                                 st.caption(f"Generic: {metadata.get('generic_product_name', 'N/A')}")
                                 st.caption(f"Supplier: {metadata.get('supplier_name', 'N/A')}")
                             with cols[1]:
@@ -2728,47 +2789,54 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                         key=f"leanchems_{tid}"
                                     )
                                     
-                                    # Multiple TDS Files Upload (Manage Products only)
+                                    # Supporting Documents section (upload, list, delete)
                                     st.markdown("---")
-                                    st.subheader("📎 Multiple TDS Files")
-                                    st.info("💡 You can upload multiple TDS files for this product. Each file will be stored separately.")
+                                    st.subheader("📎 Supporting Documents")
+                                    st.info("Upload any related files (e.g., brochures, test reports). Stored under this TDS record.")
+                                    supporting_files = metadata.get("supporting_files", [])
+                                    if supporting_files:
+                                        st.write("**Current Supporting Files:**")
+                                        sel_indices = st.multiselect(
+                                            "Select files to delete",
+                                            options=list(range(len(supporting_files))),
+                                            format_func=lambda i: supporting_files[i].get('name', f'File {i+1}') if i is not None else "",
+                                            key=f"supp_del_sel_{tid}"
+                                        )
+                                        for i, fobj in enumerate(supporting_files):
+                                            col_s1, col_s2, col_s3 = st.columns([4,1,1])
+                                            with col_s1:
+                                                name = fobj.get('name', 'Unknown file')
+                                                url = fobj.get('url')
+                                                if url:
+                                                    st.markdown(f"[📄 {name}]({url})")
+                                                else:
+                                                    st.write(f"📄 {name}")
+                                            with col_s2:
+                                                st.write(f"{(fobj.get('size') or 0) / 1024:.1f} KB")
+                                            with col_s3:
+                                                st.caption(fobj.get('type', '').upper())
+                                        if st.button("🗑️ Delete selected", key=f"del_supp_{tid}"):
+                                            try:
+                                                remaining = []
+                                                for i, f in enumerate(supporting_files):
+                                                    if i in sel_indices:
+                                                        _delete_storage_object_by_url(f.get('url') or '')
+                                                    else:
+                                                        remaining.append(f)
+                                                updated_meta = metadata.copy()
+                                                updated_meta["supporting_files"] = remaining
+                                                supabase.table("tds_data").update({"metadata": updated_meta}).eq("id", tid).execute()
+                                                st.success("Selected supporting files deleted")
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"Failed to delete files: {e}")
                                     
-                                    # Show existing TDS files
-                                    existing_tds_files = metadata.get("additional_tds_files", [])
-                                    if existing_tds_files:
-                                        st.write("**Current TDS Files:**")
-                                        for i, tds_file in enumerate(existing_tds_files):
-                                            col_tds1, col_tds2, col_tds3 = st.columns([3, 1, 1])
-                                            with col_tds1:
-                                                st.write(f"📄 {tds_file.get('name', 'Unknown file')}")
-                                            with col_tds2:
-                                                st.write(f"{tds_file.get('size', 0) / 1024:.1f} KB")
-                                            with col_tds3:
-                                                if st.button(f"🗑️ Remove", key=f"remove_tds_{tid}_{i}"):
-                                                    # Remove file from list
-                                                    existing_tds_files.pop(i)
-                                                    # Persist change back into this TDS record's metadata
-                                                    try:
-                                                        updated_meta = metadata.copy()
-                                                        updated_meta["additional_tds_files"] = existing_tds_files
-                                                        supabase.table("tds_data").update({"metadata": updated_meta}).eq("id", tid).execute()
-                                                        st.success("File removed successfully!")
-                                                        st.rerun()
-                                                    except Exception as e:
-                                                        st.error(f"Failed to remove file: {e}")
-                                    
-                                    # Upload new TDS files
-                                    new_tds_files = st.file_uploader(
-                                        "Upload Additional TDS Files (optional)", 
+                                    new_supporting = st.file_uploader(
+                                        "Upload Supporting Files",
                                         type=ALLOWED_FILE_EXTS, 
                                         accept_multiple_files=True,
-                                        key=f"multi_tds_{tid}"
+                                        key=f"supp_up_{tid}"
                                     )
-                                    
-                                    # Replace main TDS (single file)
-                                    st.markdown("---")
-                                    st.subheader("🔄 Replace Main TDS")
-                                    new_tds = st.file_uploader("Replace Main TDS (optional)", type=ALLOWED_FILE_EXTS, key=f"f_{tid}")
 
                                     # Actions
                                     ac1, ac2 = st.columns(2)
@@ -2789,20 +2857,17 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                     "is_leanchems_product": eleanchems,
                                                 }
 
-                                                # Handle multiple TDS files upload
-                                                if new_tds_files:
-                                                    additional_files = existing_tds_files.copy()
-                                                    for uploaded_file in new_tds_files:
-                                                        # Validate file
+                                                # Upload supporting files
+                                                if new_supporting:
+                                                    supp_files = metadata.get("supporting_files", []).copy()
+                                                    for uploaded_file in new_supporting:
                                                         okf, msgf = validate_file(uploaded_file)
                                                         if not okf:
                                                             st.error(f"File {uploaded_file.name}: {msgf}")
                                                             continue
-                                                        
-                                                        # Upload to Supabase
                                                         try:
-                                                            url, fname, fsize, ftype = upload_tds_to_supabase(uploaded_file, tid)
-                                                            additional_files.append({
+                                                            url, fname, fsize, ftype = upload_supporting_doc(uploaded_file, tid)
+                                                            supp_files.append({
                                                                 "url": url,
                                                                 "name": fname,
                                                                 "size": fsize,
@@ -2811,22 +2876,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                             })
                                                         except Exception as e:
                                                             st.error(f"Failed to upload {uploaded_file.name}: {e}")
-                                                    
-                                                    updates["additional_tds_files"] = additional_files
-
-                                                # TDS upload if provided (main TDS)
-                                                if new_tds is not None:
-                                                    okf, msgf = validate_file(new_tds)
-                                                    if not okf:
-                                                        st.error(msgf)
-                                                    else:
-                                                        url, fname, fsize, ftype = upload_tds_to_supabase(new_tds, tid)
-                                                        updates.update({
-                                                            "tds_file_url": url,
-                                                            "tds_file_name": fname,
-                                                            "tds_file_size": fsize,
-                                                            "tds_file_type": ftype,
-                                                        })
+                                                    updates["supporting_files"] = supp_files
 
                                                 # Update TDS data
                                                 try:
@@ -2846,8 +2896,8 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                                         "is_leanchems_product": eleanchems,
                                                     })
                                                     # Bring through file-related updates into metadata for consistency
-                                                    if "additional_tds_files" in updates:
-                                                        updated_metadata["additional_tds_files"] = updates["additional_tds_files"]
+                                                    if "supporting_files" in updates:
+                                                        updated_metadata["supporting_files"] = updates["supporting_files"]
                                                     for _k in ["tds_file_url","tds_file_name","tds_file_size","tds_file_type"]:
                                                         if _k in updates:
                                                             updated_metadata[_k] = updates[_k]
@@ -2874,27 +2924,30 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-# UI - View Products
+# UI - View TDS
 if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "view" and has_sourcing_master_access(user_email):
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">View TDS</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
-    # Category selection
-    st.subheader("Select Category to View Products")
-    selected_category = st.selectbox(
-        "Choose Category",
-        FIXED_CATEGORIES,
-        key="view_category_select"
-    )
+    # Filters (Category, Brand, Owner, Source, Search)
+    st.subheader("📊 Filter TDS Records")
+    colf1, colf2, colf3 = st.columns([2, 2, 2])
+    with colf1:
+        filter_category_v = st.selectbox("Filter by Category", ["All"] + FIXED_CATEGORIES, key="view_filter_category")
+    with colf2:
+        all_brands_v = []
+        try:
+            _res_v = supabase.table("tds_data").select("brand").execute()
+            all_brands_v = sorted(list(set([row.get("brand") for row in (_res_v.data or []) if row.get("brand")])))
+        except Exception:
+            pass
+        filter_brand_v = st.selectbox("Filter by Brand", ["All"] + all_brands_v, key="view_filter_brand")
+    with colf3:
+        filter_owner_v = st.selectbox("Filter by Owner", ["All", "Supplier", "Customer", "Competitor"], key="view_filter_owner")
 
-    # Search within category
-    search_view = st.text_input(
-        "Search products in this category",
-        placeholder="Search by name or type...",
-        key="view_search"
-    )
+    search_view = st.text_input("Search by product name/brand/supplier", placeholder="Start typing...", key="view_filter_search")
 
-    # Fetch TDS records for selected category
+    # Fetch TDS records and apply filters
     try:
         tds_records = supabase.table("tds_data").select("*").execute()
         all_tds = tds_records.data or []
@@ -2902,26 +2955,30 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         st.error(f"Failed to fetch TDS records: {e}")
         all_tds = []
 
-    # Filter by category and search
     filtered_tds = []
     for tds in all_tds:
         metadata = tds.get("metadata", {})
-        if metadata.get("category") == selected_category:
-            if search_view:
-                search_text = " ".join([
-                    metadata.get("product_name", ""),
-                    tds.get("brand", ""),
-                    metadata.get("supplier_name", ""),
-                    metadata.get("generic_product_name", "")
-                ]).lower()
-                if search_view.lower() in search_text:
-                    filtered_tds.append(tds)
-            else:
-                filtered_tds.append(tds)
+        if filter_category_v != "All" and metadata.get("category") != filter_category_v:
+            continue
+        if filter_brand_v != "All" and tds.get("brand") != filter_brand_v:
+            continue
+        if filter_owner_v != "All" and tds.get("owner") != filter_owner_v:
+            continue
+        # (Source filter removed)
+        if search_view:
+            search_text = " ".join([
+                metadata.get("product_name", ""),
+                tds.get("brand", ""),
+                metadata.get("supplier_name", ""),
+                metadata.get("generic_product_name", "")
+            ]).lower()
+            if search_view.lower() not in search_text:
+                continue
+        filtered_tds.append(tds)
 
     if not filtered_tds:
-        st.info(f"📭 No TDS records found in {selected_category} category.")
-        st.markdown(f"💡 [Go to Add TDS tab](#) to add your first TDS record in this category.")
+        st.info("📭 No TDS records found with current filters.")
+        st.markdown("💡 Adjust filters or add new TDS records in the Add tab.")
     else:
         # Group by brand
         by_brand = {}
@@ -2959,13 +3016,13 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                     st.download_button(
                         label="💾 Download CSV",
                         data=csv,
-                        file_name=f"{selected_category}_tds_records_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                        file_name=f"tds_records_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv"
                     )
                 except Exception as e:
                     st.error(f"Export failed: {e}")
 
-        st.markdown(f"**Found {len(filtered_tds)} TDS records in {selected_category}**")
+        st.markdown(f"**Found {len(filtered_tds)} TDS records**")
 
         # Display TDS records grouped by brand
         for brand, tds_list in by_brand.items():
@@ -2981,9 +3038,11 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                         # Main info row
                         col1, col2, col3 = st.columns([3, 2, 1])
                         with col1:
-                            st.markdown(f"**{metadata.get('product_name', 'Unknown Product')}**")
+                            _ptype = metadata.get('product_type', '') or 'N/A'
+                            _brand = tds.get('brand', '') or 'N/A'
+                            st.markdown(f"**{_ptype} — {_brand}**")
+                            st.caption(f"Product: {metadata.get('product_name', 'Unknown Product')}")
                             st.caption(f"Generic: {metadata.get('generic_product_name', 'N/A')}")
-                            st.caption(f"Trade: {metadata.get('trade_name', 'N/A')}")
                             # Show LeanChems status
                             leanchems_status = metadata.get("is_leanchems_product", "No")
                             if leanchems_status == "Yes":
@@ -3075,11 +3134,16 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
         # Mapping selects at the top (before Type Chemical Name)
         st.markdown("---")
         st.caption("Select Category and Product Type from mapping")
-        selected_segment = st.selectbox(
+        _chem_cat_placeholder = "— Select —"
+        _chem_cat_options = [_chem_cat_placeholder] + FIXED_CATEGORIES
+        st.markdown("**Category**")
+        _chem_cat_sel = st.selectbox(
             "Category",
-            options=FIXED_CATEGORIES,
-            key="chem_seg_select"
+            options=_chem_cat_options,
+            key="chem_seg_select",
+            label_visibility="collapsed"
         )
+        selected_segment = "" if _chem_cat_sel == _chem_cat_placeholder else _chem_cat_sel
         add_new_seg = st.checkbox("Add new category", key="chem_add_new_seg")
         if add_new_seg:
             new_seg = st.text_input("New Category Name", key="chem_new_seg")
@@ -3088,10 +3152,11 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
 
         # Persist selections for save logic (no direct widget key to avoid conflicts)
         st.session_state["chem_selected_category"] = selected_segment
-        st.write(f"Selected Category: {selected_segment or '-'}")
+        st.markdown(f"**Selected Category:** {selected_segment or '-'}")
 
         with st.form("chem_add_form", clear_on_submit=False):
-            chem_name_input = st.text_input("Type Chemical Name:", placeholder="e.g., Redispersible Polymer Powder")
+            st.markdown("**Type Chemical Name**")
+            chem_name_input = st.text_input("Type Chemical Name:", placeholder="e.g., Redispersible Polymer Powder", label_visibility="collapsed")
             if gemini_model:
                 analyze_submit = st.form_submit_button("Analyze & Prefill")
             else:
@@ -3231,13 +3296,17 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
 
         # Prefilled editable fields (reordered to requested sequence)
         # 1) Summary 80/20
-        chem_sum_8020 = st.text_area("Summary 80/20 (5–7 bullets)", value=extracted.get("summary_80_20", ""), height=80)
+        st.markdown("**Summary 80/20 (5–7 bullets)**")
+        chem_sum_8020 = st.text_area("Summary 80/20 (5–7 bullets)", value=extracted.get("summary_80_20", ""), height=80, label_visibility="collapsed")
         # 2) Synonyms
-        chem_syn = st.text_input("Synonyms (comma-separated)", value=csv_default(extracted.get("synonyms", [])))
+        st.markdown("**Synonyms (comma-separated)**")
+        chem_syn = st.text_input("Synonyms (comma-separated)", value=csv_default(extracted.get("synonyms", [])), label_visibility="collapsed")
         # 3) Family
-        chem_family = st.text_input("Family", value=extracted.get("family", ""))
+        st.markdown("**Family**")
+        chem_family = st.text_input("Family", value=extracted.get("family", ""), label_visibility="collapsed")
         # 4) Generic Name
-        chem_gen = st.text_input("Generic Name", value=extracted.get("generic_name", ""))
+        st.markdown("**Generic Name**")
+        chem_gen = st.text_input("Generic Name", value=extracted.get("generic_name", ""), label_visibility="collapsed")
         # 5) HS Codes (code only)
         def _hs_codes_as_csv():
             try:
@@ -3249,37 +3318,53 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                 return ", ".join(codes)
             except Exception:
                 return ""
-        chem_hs_codes = st.text_input("HS Codes", value=_hs_codes_as_csv())
+        st.markdown("**HS Codes**")
+        chem_hs_codes = st.text_input("HS Codes", value=_hs_codes_as_csv(), label_visibility="collapsed")
         # 6) CAS IDs
-        chem_cas = st.text_input("CAS IDs", value=csv_default(extracted.get("cas_ids", [])))
+        st.markdown("**CAS IDs**")
+        chem_cas = st.text_input("CAS IDs", value=csv_default(extracted.get("cas_ids", [])), label_visibility="collapsed")
         # 7) Summary Technical
-        chem_sum_tech = st.text_area("Summary Technical", value=extracted.get("summary_technical", ""), height=100)
+        st.markdown("**Summary Technical**")
+        chem_sum_tech = st.text_area("Summary Technical", value=extracted.get("summary_technical", ""), height=100, label_visibility="collapsed")
         # 8) Functional Categories
-        chem_func = st.text_input("Functional Categories", value=csv_default(extracted.get("functional_categories", [])))
+        st.markdown("**Functional Categories**")
+        chem_func = st.text_input("Functional Categories", value=csv_default(extracted.get("functional_categories", [])), label_visibility="collapsed")
         # 9) Industry Segments
-        chem_inds = st.text_input("Industry Segments", value=csv_default(extracted.get("industry_segments", [])))
+        st.markdown("**Industry Segments**")
+        chem_inds = st.text_input("Industry Segments", value=csv_default(extracted.get("industry_segments", [])), label_visibility="collapsed")
         # 10) Key Applications
-        chem_keys = st.text_input("Key Applications", value=csv_default(extracted.get("key_applications", [])))
+        st.markdown("**Key Applications**")
+        chem_keys = st.text_input("Key Applications", value=csv_default(extracted.get("key_applications", [])), label_visibility="collapsed")
         # 11) Typical Dosage
-        chem_dosage_json = st.text_area("Typical Dosage", value=_ai_list_as_lines(extracted.get("typical_dosage")) if extracted else "", height=80)
+        st.markdown("**Typical Dosage**")
+        chem_dosage_json = st.text_area("Typical Dosage", value=_ai_list_as_lines(extracted.get("typical_dosage")) if extracted else "", height=80, label_visibility="collapsed")
         # 12) Physical Snapshot
-        chem_phys_json = st.text_area("Physical Snapshot", value=_ai_list_as_lines(extracted.get("physical_snapshot")) if extracted else "", height=80)
+        st.markdown("**Physical Snapshot**")
+        chem_phys_json = st.text_area("Physical Snapshot", value=_ai_list_as_lines(extracted.get("physical_snapshot")) if extracted else "", height=80, label_visibility="collapsed")
         # 13) Compatibilities
-        chem_compat = st.text_input("Compatibilities", value=csv_default(extracted.get("compatibilities", [])))
+        st.markdown("**Compatibilities**")
+        chem_compat = st.text_input("Compatibilities", value=csv_default(extracted.get("compatibilities", [])), label_visibility="collapsed")
         # 14) Incompatibilities
-        chem_incompat = st.text_input("Incompatibilities", value=csv_default(extracted.get("incompatibilities", [])))
+        st.markdown("**Incompatibilities**")
+        chem_incompat = st.text_input("Incompatibilities", value=csv_default(extracted.get("incompatibilities", [])), label_visibility="collapsed")
         # 15) Sensitivities
-        chem_sens = st.text_input("Sensitivities", value=csv_default(extracted.get("sensitivities", [])))
+        st.markdown("**Sensitivities**")
+        chem_sens = st.text_input("Sensitivities", value=csv_default(extracted.get("sensitivities", [])), label_visibility="collapsed")
         # 16) Appearance
-        chem_appearance = st.text_input("Appearance", value=extracted.get("appearance", ""))
+        st.markdown("**Appearance**")
+        chem_appearance = st.text_input("Appearance", value=extracted.get("appearance", ""), label_visibility="collapsed")
         # 17) Storage Conditions
-        chem_storage = st.text_input("Storage Conditions", value=extracted.get("storage_conditions", ""))
+        st.markdown("**Storage Conditions**")
+        chem_storage = st.text_input("Storage Conditions", value=extracted.get("storage_conditions", ""), label_visibility="collapsed")
         # 18) Packaging Options
-        chem_pack = st.text_input("Packaging Options", value=csv_default(extracted.get("packaging_options", [])))
+        st.markdown("**Packaging Options**")
+        chem_pack = st.text_input("Packaging Options", value=csv_default(extracted.get("packaging_options", [])), label_visibility="collapsed")
         # 19) Shelf Life (months)
-        chem_shelf = st.number_input("Shelf Life (months)", min_value=0, max_value=120, value=int(extracted.get("shelf_life_months", 0) if extracted else 0), step=1)
+        st.markdown("**Shelf Life (months)**")
+        chem_shelf = st.number_input("Shelf Life (months)", min_value=0, max_value=120, value=int(extracted.get("shelf_life_months", 0) if extracted else 0), step=1, label_visibility="collapsed")
         # 20) Data Completeness
-        chem_dc = st.slider("Data Completeness", min_value=0.0, max_value=1.0, value=float(extracted.get("data_completeness", 0.0) if extracted else 0.0), step=0.05)
+        st.markdown("**Data Completeness**")
+        chem_dc = st.slider("Data Completeness", min_value=0.0, max_value=1.0, value=float(extracted.get("data_completeness", 0.0) if extracted else 0.0), step=0.05, label_visibility="collapsed")
 
         # Show one-line source indicator
         if extracted:
@@ -3352,6 +3437,17 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                     }
                     create_chemical(payload)
                     st.success("✅ Chemical saved successfully")
+                    # Clear AI/session state and refresh Add form
+                    try:
+                        for k in [
+                            "chem_ai_extracted",
+                            "chem_ai_source",
+                            "chem_ai_last_raw",
+                        ]:
+                            st.session_state.pop(k, None)
+                    except Exception:
+                        pass
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Failed to save chemical: {e}")
 
@@ -3689,7 +3785,30 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
     with tab_add:
         st.subheader("Add Partner")
         partner_name = st.text_input("Partner Name *")
-        partner_country = st.text_input("Partner Country *")
+        # Country dropdown (ISO list)
+        COUNTRIES = [
+            "Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda","Argentina","Armenia","Australia","Austria",
+            "Azerbaijan","Bahamas","Bahrain","Bangladesh","Barbados","Belarus","Belgium","Belize","Benin","Bhutan",
+            "Bolivia","Bosnia and Herzegovina","Botswana","Brazil","Brunei","Bulgaria","Burkina Faso","Burundi","Cabo Verde","Cambodia",
+            "Cameroon","Canada","Central African Republic","Chad","Chile","China","Colombia","Comoros","Congo (Congo-Brazzaville)","Costa Rica",
+            "Côte d’Ivoire","Croatia","Cuba","Cyprus","Czechia","Democratic Republic of the Congo","Denmark","Djibouti","Dominica","Dominican Republic",
+            "Ecuador","Egypt","El Salvador","Equatorial Guinea","Eritrea","Estonia","Eswatini","Ethiopia","Fiji","Finland",
+            "France","Gabon","Gambia","Georgia","Germany","Ghana","Greece","Grenada","Guatemala","Guinea",
+            "Guinea-Bissau","Guyana","Haiti","Honduras","Hungary","Iceland","India","Indonesia","Iran","Iraq",
+            "Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya","Kiribati","Kuwait",
+            "Kyrgyzstan","Laos","Latvia","Lebanon","Lesotho","Liberia","Libya","Liechtenstein","Lithuania","Luxembourg",
+            "Madagascar","Malawi","Malaysia","Maldives","Mali","Malta","Marshall Islands","Mauritania","Mauritius","Mexico",
+            "Micronesia","Moldova","Monaco","Mongolia","Montenegro","Morocco","Mozambique","Myanmar","Namibia","Nauru",
+            "Nepal","Netherlands","New Zealand","Nicaragua","Niger","Nigeria","North Korea","North Macedonia","Norway","Oman",
+            "Pakistan","Palau","Panama","Papua New Guinea","Paraguay","Peru","Philippines","Poland","Portugal","Qatar",
+            "Romania","Russia","Rwanda","Saint Kitts and Nevis","Saint Lucia","Saint Vincent and the Grenadines","Samoa","San Marino","Sao Tome and Principe","Saudi Arabia",
+            "Senegal","Serbia","Seychelles","Sierra Leone","Singapore","Slovakia","Slovenia","Solomon Islands","Somalia","South Africa",
+            "South Korea","South Sudan","Spain","Sri Lanka","Sudan","Suriname","Sweden","Switzerland","Syria","Taiwan",
+            "Tajikistan","Tanzania","Thailand","Timor-Leste","Togo","Tonga","Trinidad and Tobago","Tunisia","Turkey","Turkmenistan",
+            "Tuvalu","Uganda","Ukraine","United Arab Emirates","United Kingdom","United States","Uruguay","Uzbekistan","Vanuatu","Vatican City",
+            "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe"
+        ]
+        partner_country = st.selectbox("Partner Country *", COUNTRIES)
         st.markdown("---")
         st.subheader("Which chemical types")
         st.caption("Tick Yes for chemical types this partner supplies or relates to.")
@@ -3734,7 +3853,15 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                 resp = create_partner(partner_name, partner_country, selected_list)
                 if resp is not None:
                     st.success("✅ Partner saved")
-                    st.session_state["partner_go_manage"] = True
+                    # Reset Add Partner form back to defaults
+                    try:
+                        for k in [
+                            # No explicit widget keys are used here, so nothing to clear
+                        ]:
+                            st.session_state.pop(k, None)
+                    except Exception:
+                        pass
+                    # Return to Add tab (keep same tab)
                     st.rerun()
 
     with tab_manage:
@@ -3750,7 +3877,7 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                     with col1:
                         e_name = st.text_input("Partner", value=p.get("partner", ""), key=f"pn_{pid}")
                     with col2:
-                        e_country = st.text_input("Country", value=p.get("partner_country", ""), key=f"pc_{pid}")
+                        e_country = st.selectbox("Country", COUNTRIES, index=(COUNTRIES.index(p.get("partner_country", "")) if p.get("partner_country") in COUNTRIES else 0), key=f"pc_{pid}")
 
                     # (Actions moved under TDS-backed Products below)
 
@@ -4003,9 +4130,13 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
         tds_opts = {f"{t.get('name')} — {t.get('category')}": t.get("id") for t in tds_items}
 
         with colp1:
-            sel_partner_label = st.selectbox("Partner", list(partner_opts.keys()) or ["—"], index=0 if partner_opts else 0)
+            _partner_placeholder = "— Select —"
+            _partner_labels = [_partner_placeholder] + list(partner_opts.keys()) if partner_opts else [_partner_placeholder]
+            sel_partner_label = st.selectbox("Partner", _partner_labels, index=0)
         with colp2:
-            sel_tds_label = st.selectbox("Select TDS", list(tds_opts.keys()) or ["—"], index=0 if tds_opts else 0)
+            _tds_placeholder = "— Select —"
+            _tds_labels = [_tds_placeholder] + list(tds_opts.keys()) if tds_opts else [_tds_placeholder]
+            sel_tds_label = st.selectbox("Select TDS", _tds_labels, index=0)
 
         # Editable pricing table
         st.markdown("---")
@@ -4045,14 +4176,20 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                         "price_usd": st.session_state.get(f"p_pu_{i}") or "",
                         "price_etb": st.session_state.get(f"p_pe_{i}") or "",
                     })
-                pid = partner_opts.get(sel_partner_label)
-                tid = tds_opts.get(sel_tds_label)
+                pid = partner_opts.get(sel_partner_label) if sel_partner_label and sel_partner_label != _partner_placeholder else None
+                tid = tds_opts.get(sel_tds_label) if sel_tds_label and sel_tds_label != _tds_placeholder else None
                 if not pid or not tid:
                     st.error("Please select Partner and TDS")
                 else:
                     resp = _pricing_table_add(pid, tid, out_rows)
                     if resp is not None:
                         st.success("✅ Pricing saved")
+                        # Reset pricing add form state and stay on Add tab
+                        try:
+                            st.session_state["pricing_rows_add"] = _incoterm_rows_default()
+                        except Exception:
+                            pass
+                        st.rerun()
 
     # Manage
     with tab_p_manage:
