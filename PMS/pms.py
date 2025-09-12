@@ -3869,6 +3869,27 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             # Silently ignore; UI will still continue
             pass
 
+    def _reset_session_keys(keys: list[str]):
+        try:
+            for k in keys:
+                try:
+                    st.session_state.pop(k, None)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _reset_session_by_prefix(prefixes: list[str]):
+        try:
+            for k in list(st.session_state.keys()):
+                if any(k.startswith(pfx) for pfx in prefixes):
+                    try:
+                        st.session_state.pop(k, None)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     with tab_add_partner:
         st.subheader("Add Partner")
         partner_name = st.text_input("Partner Name *")
@@ -3907,15 +3928,8 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                 resp = create_partner(partner_name, partner_country, [])
                 if resp is not None:
                     st.success("✅ Partner saved")
-                    # Reset Add Partner form back to defaults
-                    try:
-                        for k in [
-                            # No explicit widget keys are used here, so nothing to clear
-                        ]:
-                            st.session_state.pop(k, None)
-                    except Exception:
-                        pass
-                    # Return to Add tab (keep same tab)
+                    # Reset Add Partner inputs
+                    _reset_session_by_prefix(["pn_","pc_"]) 
                     st.rerun()
 
     with tab_add_chemical:
@@ -3964,6 +3978,8 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                     new_list = existing + to_add
                     partner_set_products(partner_obj.get("id"), new_list)
                     st.success("Assigned chemicals to partner")
+                    # Reset selection inputs
+                    _reset_session_by_prefix(["rem_","add_more_"])
 
     with tab_manage:
         st.subheader("Manage Partners")
@@ -4046,6 +4062,7 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                         new_list = assigned + add_items
                         partner_set_products(pid, new_list)
                         st.success("Added")
+                        _reset_session_by_prefix(["add_more_"])
                         st.rerun()
                     # Compact action buttons placed under TDS-backed Products
                     st.markdown('<div class="partner-actions partner-actions-cta">', unsafe_allow_html=True)
@@ -4222,17 +4239,29 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
         except Exception:
             return []
 
+    GLOBAL_INCOTERMS = ["FOB", "CIF Mombasa", "SEZ MCF"]
+    KENYA_INCOTERMS = ["Nairobi", "FCA Moyale", "Addis"]
+
     def _incoterm_rows_default():
-        rows = [
-            {"incoterm": "Ex-Work", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
-            {"incoterm": "FOB", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
-            {"incoterm": "CIF Mombasa", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
-            {"incoterm": "SEZ MCF", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
-            {"incoterm": "Nairobi", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
-            {"incoterm": "FCA Moyale", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
-            {"incoterm": "Addis", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""},
-        ]
+        rows = []
+        for inc in GLOBAL_INCOTERMS + KENYA_INCOTERMS:
+            rows.append({"incoterm": inc, "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""})
         return rows
+
+    def _split_rows(rows: list[dict]):
+        global_rows, kenya_rows, other_rows = [], [], []
+        try:
+            for r in rows or []:
+                inc = str(r.get("incoterm") or "").strip()
+                if inc in GLOBAL_INCOTERMS:
+                    global_rows.append(r)
+                elif inc in KENYA_INCOTERMS:
+                    kenya_rows.append(r)
+                else:
+                    other_rows.append(r)
+        except Exception:
+            pass
+        return global_rows, kenya_rows, other_rows
 
     def _pricing_table_add(partner_id: str, tds_id: str, rows: list[dict]):
         try:
@@ -4293,51 +4322,55 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
             st.session_state["pricing_rows_add"] = _incoterm_rows_default()
 
         rows = st.session_state["pricing_rows_add"]
-        # Render rows
-        st.caption("Incoterm | Costing USD | Costing ETB | Pricing USD | Pricing ETB")
-        for i, r in enumerate(rows):
-            c1, c2, c3, c4, c5 = st.columns([2,2,2,2,2])
-            with c1:
-                st.text_input("Incoterm", value=r.get("incoterm", ""), key=f"p_inc_{i}")
-            with c2:
-                st.text_input("Costing USD", value=r.get("cost_usd", ""), key=f"p_cu_{i}")
-            with c3:
-                st.text_input("Costing ETB", value=r.get("cost_etb", ""), key=f"p_ce_{i}")
-            with c4:
-                st.text_input("Pricing USD", value=r.get("price_usd", ""), key=f"p_pu_{i}")
-            with c5:
-                st.text_input("Pricing ETB", value=r.get("price_etb", ""), key=f"p_pe_{i}")
+        global_rows, kenya_rows, other_rows = _split_rows(rows)
 
-        add_row_col, save_col = st.columns([1,1])
-        with add_row_col:
-            if st.button("➕ Add Row", key="p_add_row"):
-                rows.append({"incoterm": "", "cost_usd": "", "cost_etb": "", "price_usd": "", "price_etb": ""})
-        with save_col:
-            if st.button("💾 Save Pricing", type="primary", key="p_save_add"):
-                # Collect values back from widgets
-                out_rows = []
-                for i in range(len(rows)):
-                    out_rows.append({
-                        "incoterm": st.session_state.get(f"p_inc_{i}") or "",
-                        "cost_usd": st.session_state.get(f"p_cu_{i}") or "",
-                        "cost_etb": st.session_state.get(f"p_ce_{i}") or "",
-                        "price_usd": st.session_state.get(f"p_pu_{i}") or "",
-                        "price_etb": st.session_state.get(f"p_pe_{i}") or "",
+        def _render_rows(prefix: str, rows_list: list[dict]):
+            st.caption("Incoterm | Costing USD | Costing ETB | Pricing USD | Pricing ETB")
+            for i, r in enumerate(rows_list):
+                c1, c2, c3, c4, c5 = st.columns([2,2,2,2,2])
+                with c1:
+                    st.text_input("Incoterm", value=r.get("incoterm", ""), key=f"{prefix}_inc_{i}")
+                with c2:
+                    st.text_input("Costing USD", value=r.get("cost_usd", ""), key=f"{prefix}_cu_{i}")
+                with c3:
+                    st.text_input("Costing ETB", value=r.get("cost_etb", ""), key=f"{prefix}_ce_{i}")
+                with c4:
+                    st.text_input("Pricing USD", value=r.get("price_usd", ""), key=f"{prefix}_pu_{i}")
+                with c5:
+                    st.text_input("Pricing ETB", value=r.get("price_etb", ""), key=f"{prefix}_pe_{i}")
+
+        st.markdown("**Global Sourcing (FOB, CIF Mombasa, SEZ MCF)**")
+        _render_rows("g", global_rows)
+
+        st.markdown("**Kenya Pricing & Costing (Nairobi, FCA, Addis)**")
+        _render_rows("k", kenya_rows)
+
+        # Save combined
+        if st.button("💾 Save Pricing", type="primary", key="p_save_add"):
+            def _collect(prefix: str, lst: list[dict]):
+                out = []
+                for i in range(len(lst)):
+                    out.append({
+                        "incoterm": st.session_state.get(f"{prefix}_inc_{i}") or "",
+                        "cost_usd": st.session_state.get(f"{prefix}_cu_{i}") or "",
+                        "cost_etb": st.session_state.get(f"{prefix}_ce_{i}") or "",
+                        "price_usd": st.session_state.get(f"{prefix}_pu_{i}") or "",
+                        "price_etb": st.session_state.get(f"{prefix}_pe_{i}") or "",
                     })
-                pid = partner_opts.get(sel_partner_label) if sel_partner_label and sel_partner_label != _partner_placeholder else None
-                tid = tds_opts.get(sel_tds_label) if sel_tds_label and sel_tds_label != _tds_placeholder else None
-                if not pid or not tid:
-                    st.error("Please select Partner and TDS")
-                else:
-                    resp = _pricing_table_add(pid, tid, out_rows)
-                    if resp is not None:
-                        st.success("✅ Pricing saved")
-                        # Reset pricing add form state and stay on Add tab
-                        try:
-                            st.session_state["pricing_rows_add"] = _incoterm_rows_default()
-                        except Exception:
-                            pass
-                        st.rerun()
+                return out
+            out_rows = _collect("g", global_rows) + _collect("k", kenya_rows)
+            pid = partner_opts.get(sel_partner_label) if sel_partner_label and sel_partner_label != _partner_placeholder else None
+            tid = tds_opts.get(sel_tds_label) if sel_tds_label and sel_tds_label != _tds_placeholder else None
+            if not pid or not tid:
+                st.error("Please select Partner and TDS")
+            else:
+                resp = _pricing_table_add(pid, tid, out_rows)
+                if resp is not None:
+                    st.success("✅ Pricing saved")
+                    # Reset add pricing session state
+                    _reset_session_keys(["pricing_rows_add"]) 
+                    _reset_session_by_prefix(["g_inc_","g_cu_","g_ce_","g_pu_","g_pe_","k_inc_","k_cu_","k_ce_","k_pu_","k_pe_"])
+                    st.rerun()
 
     # Manage
     with tab_p_manage:
@@ -4360,36 +4393,48 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
 
                 _pname = _partners_map.get(partner_id, partner_id or "-")
                 with st.expander(f"Costing & Pricing — {_pname}", expanded=False):
-                    # Editable table like Add
-                    st.caption("Incoterm | Costing USD | Costing ETB | Pricing USD | Pricing ETB")
-                    for i, r in enumerate(rows):
-                        c1, c2, c3, c4, c5 = st.columns([2,2,2,2,2])
-                        with c1:
-                            st.text_input("Incoterm", value=r.get("incoterm", ""), key=f"pm_inc_{rid}_{i}")
-                        with c2:
-                            st.text_input("Costing USD", value=r.get("cost_usd", ""), key=f"pm_cu_{rid}_{i}")
-                        with c3:
-                            st.text_input("Costing ETB", value=r.get("cost_etb", ""), key=f"pm_ce_{rid}_{i}")
-                        with c4:
-                            st.text_input("Pricing USD", value=r.get("price_usd", ""), key=f"pm_pu_{rid}_{i}")
-                        with c5:
-                            st.text_input("Pricing ETB", value=r.get("price_etb", ""), key=f"pm_pe_{rid}_{i}")
+                    # Split rows into groups
+                    g_rows, k_rows, o_rows = _split_rows(rows)
+
+                    def _render_manage(prefix: str, rows_list: list[dict], title: str):
+                        st.markdown(f"**{title}**")
+                        st.caption("Incoterm | Costing USD | Costing ETB | Pricing USD | Pricing ETB")
+                        for i, r in enumerate(rows_list):
+                            c1, c2, c3, c4, c5 = st.columns([2,2,2,2,2])
+                            with c1:
+                                st.text_input("Incoterm", value=r.get("incoterm", ""), key=f"pm_inc_{prefix}_{rid}_{i}")
+                            with c2:
+                                st.text_input("Costing USD", value=r.get("cost_usd", ""), key=f"pm_cu_{prefix}_{rid}_{i}")
+                            with c3:
+                                st.text_input("Costing ETB", value=r.get("cost_etb", ""), key=f"pm_ce_{prefix}_{rid}_{i}")
+                            with c4:
+                                st.text_input("Pricing USD", value=r.get("price_usd", ""), key=f"pm_pu_{prefix}_{rid}_{i}")
+                            with c5:
+                                st.text_input("Pricing ETB", value=r.get("price_etb", ""), key=f"pm_pe_{prefix}_{rid}_{i}")
+
+                    _render_manage("g", g_rows, "Global Sourcing (FOB, CIF Mombasa, SEZ MCF)")
+                    _render_manage("k", k_rows, "Kenya Pricing & Costing (Nairobi, FCA, Addis)")
 
                     mc1, mc2, mc3 = st.columns([1,1,1])
                     with mc1:
                         if st.button("💾 Save", key=f"pm_save_{rid}"):
-                            # collect
-                            new_rows = []
-                            for i in range(len(rows)):
-                                new_rows.append({
-                                    "incoterm": st.session_state.get(f"pm_inc_{rid}_{i}") or "",
-                                    "cost_usd": st.session_state.get(f"pm_cu_{rid}_{i}") or "",
-                                    "cost_etb": st.session_state.get(f"pm_ce_{rid}_{i}") or "",
-                                    "price_usd": st.session_state.get(f"pm_pu_{rid}_{i}") or "",
-                                    "price_etb": st.session_state.get(f"pm_pe_{rid}_{i}") or "",
-                                })
+                            # collect per group
+                            def _collect(prefix: str, lst: list[dict]):
+                                out = []
+                                for i in range(len(lst)):
+                                    out.append({
+                                        "incoterm": st.session_state.get(f"pm_inc_{prefix}_{rid}_{i}") or "",
+                                        "cost_usd": st.session_state.get(f"pm_cu_{prefix}_{rid}_{i}") or "",
+                                        "cost_etb": st.session_state.get(f"pm_ce_{prefix}_{rid}_{i}") or "",
+                                        "price_usd": st.session_state.get(f"pm_pu_{prefix}_{rid}_{i}") or "",
+                                        "price_etb": st.session_state.get(f"pm_pe_{prefix}_{rid}_{i}") or "",
+                                    })
+                                return out
+                            new_rows = _collect("g", g_rows) + _collect("k", k_rows)
                             _pricing_table_update(rid, {"rows": new_rows})
                             st.success("Updated")
+                            # Reset manage pricing inputs for this record
+                            _reset_session_by_prefix([f"pm_inc_g_{rid}_", f"pm_cu_g_{rid}_", f"pm_ce_g_{rid}_", f"pm_pu_g_{rid}_", f"pm_pe_g_{rid}_", f"pm_inc_k_{rid}_", f"pm_cu_k_{rid}_", f"pm_ce_k_{rid}_", f"pm_pu_k_{rid}_", f"pm_pe_k_{rid}_"]) 
                             st.rerun()
                     with mc2:
                         if st.button("🗑️ Delete", key=f"pm_del_{rid}"):
