@@ -1348,6 +1348,281 @@ def _reset_session_by_prefix(prefixes: list[str]):
     except Exception:
         pass
 
+def _has_unsaved_chemical_changes() -> bool:
+    """Check if there are unsaved changes in chemical editing session"""
+    try:
+        # Check if we're in chemical section and have AI extracted data or form data
+        if st.session_state.get("main_section") != "chemical":
+            return False
+        
+        current_tab = st.session_state.get("chemical_current_tab", "Add Chemical")
+        
+        # Check for unsaved changes in Add Chemical tab
+        if current_tab == "Add Chemical":
+            # Check for AI extracted data that hasn't been saved
+            if st.session_state.get("chem_ai_extracted"):
+                return True
+                
+            # Check for any chemical form data that might indicate editing
+            # Exclude navigation and selection keys that don't represent unsaved changes
+            excluded_keys = {
+                "chem_selected_category", "chem_seg_select", "chem_add_new_seg", "chem_new_seg",
+                "chem_current_tab", "chem_manage_refresh_token"
+            }
+            chem_keys = [k for k in st.session_state.keys() if k.startswith("chem_")]
+            if any(k for k in chem_keys if k not in excluded_keys):
+                return True
+        
+        # Check for unsaved changes in Manage Chemicals tab
+        elif current_tab == "Manage Chemicals":
+            # Check for any chemical manage form data that might indicate editing
+            # Look for form keys that start with 'c' followed by the chemical ID (like 'cn_', 'cf_', etc.)
+            manage_keys = [k for k in st.session_state.keys() if k.startswith("cn_") or k.startswith("cf_") or k.startswith("csy_") or k.startswith("cca_") or k.startswith("ch_") or k.startswith("cc_") or k.startswith("ci_") or k.startswith("cak_") or k.startswith("cdj_") or k.startswith("cap_") or k.startswith("cps_") or k.startswith("ccom_") or k.startswith("cinc_") or k.startswith("csen_") or k.startswith("csh_") or k.startswith("cst_") or k.startswith("cpa_") or k.startswith("cdc_") or k.startswith("c80_") or k.startswith("cstt_")]
+            if manage_keys:
+                return True
+            
+        return False
+    except Exception:
+        return False
+
+def _clear_chemical_editing_session():
+    """Clear all chemical editing related session state"""
+    try:
+        # Preserve navigation and selection keys
+        preserve_keys = {
+            "chem_selected_category", "chem_seg_select", "chem_add_new_seg", "chem_new_seg",
+            "chem_current_tab", "chem_manage_refresh_token"
+        }
+        
+        keys_to_remove = []
+        for key in st.session_state.keys():
+            if key.startswith("chem_") and key not in preserve_keys:
+                keys_to_remove.append(key)
+        
+        # Also clear manage form data (keys that start with 'c' followed by underscore and ID)
+        for key in st.session_state.keys():
+            if (key.startswith("cn_") or key.startswith("cf_") or key.startswith("csy_") or 
+                key.startswith("cca_") or key.startswith("ch_") or key.startswith("cc_") or 
+                key.startswith("ci_") or key.startswith("cak_") or key.startswith("cdj_") or 
+                key.startswith("cap_") or key.startswith("cps_") or key.startswith("ccom_") or 
+                key.startswith("cinc_") or key.startswith("csen_") or key.startswith("csh_") or 
+                key.startswith("cst_") or key.startswith("cpa_") or key.startswith("cdc_") or 
+                key.startswith("c80_") or key.startswith("cstt_")):
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            st.session_state.pop(key, None)
+    except Exception:
+        pass
+
+def _has_unsaved_changes(module: str) -> bool:
+    """Generic function to check for unsaved changes in any module"""
+    try:
+        if module == "chemical":
+            return _has_unsaved_chemical_changes()
+        elif module == "sourcing":
+            return _has_unsaved_sourcing_changes()
+        elif module == "partner_master":
+            return _has_unsaved_partner_changes()
+        elif module == "pricing":
+            return _has_unsaved_pricing_changes()
+        return False
+    except Exception:
+        return False
+
+def _clear_module_session(module: str):
+    """Generic function to clear session state for any module"""
+    try:
+        if module == "chemical":
+            _clear_chemical_editing_session()
+        elif module == "sourcing":
+            _clear_sourcing_session()
+        elif module == "partner_master":
+            _clear_partner_session()
+        elif module == "pricing":
+            _clear_pricing_session()
+    except Exception:
+        pass
+
+def _has_unsaved_sourcing_changes() -> bool:
+    """Check if there are unsaved changes in TDS/sourcing session"""
+    try:
+        if st.session_state.get("main_section") != "sourcing":
+            return False
+        
+        current_section = st.session_state.get("sourcing_section", "add")
+        
+        # Check for unsaved changes in Add TDS tab
+        if current_section == "add":
+            # Check for TDS extracted data that hasn't been saved
+            if st.session_state.get("extracted_tds_data") or st.session_state.get("extracted_tds_data_norm"):
+                return True
+                
+            # Check for TDS form data that might indicate editing
+            excluded_keys = {
+                "sourcing_section", "tds_defaults", "tds_hydrate_pending", "category_select_prev"
+            }
+            tds_keys = [k for k in st.session_state.keys() if k.startswith("tds_")]
+            if any(k for k in tds_keys if k not in excluded_keys):
+                return True
+        
+        # Check for unsaved changes in Manage TDS tab
+        elif current_section == "manage":
+            # Check for any TDS manage form data that might indicate editing
+            # Look for form keys that start with 't' followed by the TDS ID (like 'tn_', 'tf_', etc.)
+            manage_keys = [k for k in st.session_state.keys() if k.startswith("tn_") or k.startswith("tf_") or k.startswith("ts_") or k.startswith("tp_") or k.startswith("tw_") or k.startswith("th_") or k.startswith("tt_")]
+            if manage_keys:
+                return True
+            
+        return False
+    except Exception:
+        return False
+
+def _clear_sourcing_session():
+    """Clear all TDS/sourcing related session state"""
+    try:
+        # Preserve navigation keys
+        preserve_keys = {
+            "sourcing_section", "tds_defaults", "tds_hydrate_pending", "category_select_prev"
+        }
+        
+        keys_to_remove = []
+        for key in st.session_state.keys():
+            if (key.startswith("tds_") or key.startswith("extracted_tds_")) and key not in preserve_keys:
+                keys_to_remove.append(key)
+        
+        # Also clear manage form data (keys that start with 't' followed by underscore and ID)
+        for key in st.session_state.keys():
+            if (key.startswith("tn_") or key.startswith("tf_") or key.startswith("ts_") or 
+                key.startswith("tp_") or key.startswith("tw_") or key.startswith("th_") or 
+                key.startswith("tt_")):
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            st.session_state.pop(key, None)
+    except Exception:
+        pass
+
+def _has_unsaved_partner_changes() -> bool:
+    """Check if there are unsaved changes in partner session"""
+    try:
+        if st.session_state.get("main_section") != "partner_master":
+            return False
+        
+        current_tab = st.session_state.get("partner_current_tab", "Add Partner")
+        
+        # Check for unsaved changes in Add Partner or Add Chemical tabs
+        if current_tab in ["Add Partner", "Add Chemical"]:
+            # Check for partner form data that might indicate editing
+            excluded_keys = {
+                "partner_go_manage", "partner_view_open_id", "partner_current_tab"
+            }
+            partner_keys = [k for k in st.session_state.keys() if k.startswith("partner_") or k.startswith("add_more_")]
+            if any(k for k in partner_keys if k not in excluded_keys):
+                return True
+        
+        # Check for unsaved changes in Manage tab
+        elif current_tab == "Manage":
+            # Check for any partner manage form data that might indicate editing
+            # Look for form keys that start with 'p' followed by the partner ID (like 'pn_', 'pc_', etc.)
+            manage_keys = [k for k in st.session_state.keys() if k.startswith("pn_") or k.startswith("pc_") or k.startswith("ps_") or k.startswith("pd_")]
+            if manage_keys:
+                return True
+            
+        return False
+    except Exception:
+        return False
+
+def _clear_partner_session():
+    """Clear all partner related session state"""
+    try:
+        # Preserve navigation keys
+        preserve_keys = {
+            "partner_go_manage", "partner_view_open_id", "partner_current_tab"
+        }
+        
+        keys_to_remove = []
+        for key in st.session_state.keys():
+            if (key.startswith("partner_") or key.startswith("add_more_")) and key not in preserve_keys:
+                keys_to_remove.append(key)
+        
+        # Also clear manage form data (keys that start with 'p' followed by underscore and ID)
+        for key in st.session_state.keys():
+            if (key.startswith("pn_") or key.startswith("pc_") or key.startswith("ps_") or 
+                key.startswith("pd_")):
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            st.session_state.pop(key, None)
+    except Exception:
+        pass
+
+def _has_unsaved_pricing_changes() -> bool:
+    """Check if there are unsaved changes in pricing session"""
+    try:
+        if st.session_state.get("main_section") != "pricing":
+            return False
+        
+        current_tab = st.session_state.get("pricing_current_tab", "Add")
+        
+        # Check for unsaved changes in Add tab
+        if current_tab == "Add":
+            # Check for pricing form data that might indicate editing
+            pricing_keys = [k for k in st.session_state.keys() if k.startswith("pricing_")]
+            if pricing_keys:
+                return True
+        
+        # Check for unsaved changes in Manage tab
+        elif current_tab == "Manage":
+            # Check for any pricing manage form data that might indicate editing
+            # Look for form keys that start with 'pr' followed by the pricing ID (like 'prn_', 'prc_', etc.)
+            manage_keys = [k for k in st.session_state.keys() if k.startswith("prn_") or k.startswith("prc_") or k.startswith("prs_") or k.startswith("prd_")]
+            if manage_keys:
+                return True
+            
+        return False
+    except Exception:
+        return False
+
+def _clear_pricing_session():
+    """Clear all pricing related session state"""
+    try:
+        keys_to_remove = []
+        for key in st.session_state.keys():
+            if key.startswith("pricing_"):
+                keys_to_remove.append(key)
+        
+        # Also clear manage form data (keys that start with 'pr' followed by underscore and ID)
+        for key in st.session_state.keys():
+            if (key.startswith("prn_") or key.startswith("prc_") or key.startswith("prs_") or 
+                key.startswith("prd_")):
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            st.session_state.pop(key, None)
+    except Exception:
+        pass
+
+
+def _is_in_manage_tab(module: str) -> bool:
+    """Check if user is currently in a manage tab"""
+    try:
+        if module == "chemical":
+            current_tab = st.session_state.get("chemical_current_tab", "Add Chemical")
+            return current_tab == "Manage Chemicals"
+        elif module == "sourcing":
+            current_section = st.session_state.get("sourcing_section", "add")
+            return current_section == "manage"
+        elif module == "partner_master":
+            current_tab = st.session_state.get("partner_current_tab", "Add Partner")
+            return current_tab == "Manage"
+        elif module == "pricing":
+            current_tab = st.session_state.get("pricing_current_tab", "Add")
+            return current_tab == "Manage"
+        return False
+    except Exception:
+        return False
+
 def name_exists(name: str) -> bool:
     res = supabase.table("chemical_types").select("id").eq("name", name.strip()).limit(1).execute()
     return bool(res.data)
@@ -1652,13 +1927,91 @@ if len(accessible_nav_items) > 0:
             ''', unsafe_allow_html=True)
             
             if button_clicked:
-                st.session_state["main_section"] = item["key"]
-                st.rerun()
+                # Check for unsaved changes in current module before navigation
+                current_module = st.session_state.get("main_section")
+                if current_module and _has_unsaved_changes(current_module):
+                    st.session_state["pending_navigation"] = item["key"]
+                    st.session_state["show_navigation_confirm"] = True
+                    st.rerun()
+                else:
+                    # Clear current module session and navigate
+                    if current_module:
+                        _clear_module_session(current_module)
+                    st.session_state["main_section"] = item["key"]
+                    st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 else:
     st.warning("You don't have access to any modules. Please contact your administrator.")
 
 st.markdown('</div>', unsafe_allow_html=True)
+
+# Navigation confirmation dialog for unsaved changes
+if st.session_state.get("show_navigation_confirm", False):
+    current_module = st.session_state.get("main_section")
+    module_names = {
+        "chemical": "Chemical Master Data",
+        "sourcing": "TDS Master Data", 
+        "partner_master": "Partner Master Data",
+        "pricing": "Pricing & Costing Master Data"
+    }
+    module_name = module_names.get(current_module, "Current Module")
+    is_manage_tab = _is_in_manage_tab(current_module)
+    
+    st.markdown('<div class="form-card" style="border: 2px solid #f56565; background-color: #fed7d7;">', unsafe_allow_html=True)
+    
+    if is_manage_tab:
+        st.warning(f"⚠️ You have unsaved changes in {module_name} Manage section")
+        st.markdown("You have unsaved changes that will be lost if you navigate away. Please save your changes using the individual 'Save' buttons for each record, then navigate.")
+        st.info("💡 **Tip**: Each record in the manage section has its own 'Save' button. Save all your changes first, then navigate.")
+        
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            if st.button("🗑️ Discard & Continue", key="nav_discard_continue", type="primary"):
+                # Clear session and navigate
+                if current_module:
+                    _clear_module_session(current_module)
+                st.session_state["show_navigation_confirm"] = False
+                pending_nav = st.session_state.pop("pending_navigation", None)
+                if pending_nav:
+                    st.session_state["main_section"] = pending_nav
+                st.rerun()
+        
+        with col2:
+            if st.button("❌ Cancel", key="nav_cancel"):
+                # Cancel navigation and stay in current section
+                st.session_state["show_navigation_confirm"] = False
+                st.session_state.pop("pending_navigation", None)
+                st.rerun()
+        
+        with col3:
+            st.caption("Your unsaved changes will be lost if you continue.")
+    else:
+        st.warning(f"⚠️ You have unsaved changes in {module_name}")
+        st.markdown("You have unsaved changes that will be lost if you navigate away. What would you like to do?")
+        
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            if st.button("🗑️ Discard & Continue", key="nav_discard_continue", type="primary"):
+                # Clear session and navigate
+                if current_module:
+                    _clear_module_session(current_module)
+                st.session_state["show_navigation_confirm"] = False
+                pending_nav = st.session_state.pop("pending_navigation", None)
+                if pending_nav:
+                    st.session_state["main_section"] = pending_nav
+                st.rerun()
+        
+        with col2:
+            if st.button("❌ Cancel", key="nav_cancel"):
+                # Cancel navigation and stay in current section
+                st.session_state["show_navigation_confirm"] = False
+                st.session_state.pop("pending_navigation", None)
+                st.rerun()
+        
+        with col3:
+            st.caption("Your unsaved changes will be lost if you continue.")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # Access control messages for restricted sections
 if st.session_state.get("main_section") == "chemical" and not has_chemical_master_access(user_email):
@@ -1707,8 +2060,15 @@ if st.session_state.get("main_section") == "sourcing" and has_sourcing_master_ac
                 use_container_width=True,
                 type="primary" if is_active else "secondary"
             ):
-                st.session_state["sourcing_section"] = item["key"]
-                st.rerun()
+                # Check for unsaved changes when switching tabs within sourcing
+                current_section = st.session_state.get("sourcing_section")
+                if (current_section != item["key"] and current_section and _has_unsaved_sourcing_changes()):
+                    # Set pending navigation instead of showing dialog immediately
+                    st.session_state["pending_sourcing_section"] = item["key"]
+                    st.rerun()
+                else:
+                    st.session_state["sourcing_section"] = item["key"]
+                    st.rerun()
             
             st.markdown(f'''
             <div style="text-align: center; margin-top: 0.5rem;">
@@ -1719,6 +2079,44 @@ if st.session_state.get("main_section") == "sourcing" and has_sourcing_master_ac
             ''', unsafe_allow_html=True)
     
     st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Handle pending TDS section changes with confirmation dialog
+    if st.session_state.get("pending_sourcing_section"):
+        new_section = st.session_state.get("pending_sourcing_section")
+        current_section = st.session_state.get("sourcing_section")
+        
+        if current_section == "add":
+            st.warning("⚠️ You have unsaved changes in the Add TDS tab.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("🗑️ Discard & Continue", key="discard_tds_add", type="primary"):
+                    _clear_sourcing_session()
+                    st.session_state["sourcing_section"] = new_section
+                    st.session_state.pop("pending_sourcing_section")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key="cancel_tds_add"):
+                    st.session_state.pop("pending_sourcing_section")
+                    st.rerun()
+            with col3:
+                st.caption("Your unsaved changes will be lost if you continue.")
+            st.stop()
+        elif current_section == "manage":
+            st.warning("⚠️ You have unsaved changes in the Manage TDS tab.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("🗑️ Discard & Continue", key="discard_tds_manage", type="primary"):
+                    _clear_sourcing_session()
+                    st.session_state["sourcing_section"] = new_section
+                    st.session_state.pop("pending_sourcing_section")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key="cancel_tds_manage"):
+                    st.session_state.pop("pending_sourcing_section")
+                    st.rerun()
+            with col3:
+                st.caption("Your unsaved changes will be lost if you continue.")
+            st.stop()
 
 # UI - Add Product
 if st.session_state.get("main_section") == "sourcing" and st.session_state.get("sourcing_section") == "add" and has_sourcing_master_access(user_email):
@@ -1863,7 +2261,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                 _n = {_normalize_key(k): v for k, v in _tmp.items()}
                 st.session_state["extracted_tds_data_norm"] = _n
             if not _n:
-                return
+                st.stop()
             def _get_first(keys: list[str], default: str = ""):
                 for k in keys:
                     if k in _n and _n.get(k):
@@ -2095,6 +2493,8 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                     st.rerun()
                 except Exception as e:
                     st.error(f"Failed to save product: {e}")
+        
+        # Add clear session button if there are unsaved changes
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -2977,13 +3377,18 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
     with colf1:
         filter_category_v = st.selectbox("Filter by Category", ["All"] + FIXED_CATEGORIES, key="view_filter_category")
     with colf2:
-        all_brands_v = []
+        all_product_types_v = []
         try:
-            _res_v = supabase.table("tds_data").select("brand").execute()
-            all_brands_v = sorted(list(set([row.get("brand") for row in (_res_v.data or []) if row.get("brand")])))
+            _res_v = supabase.table("tds_data").select("metadata").execute()
+            for row in (_res_v.data or []):
+                metadata = row.get("metadata", {})
+                product_type = metadata.get("product_type")
+                if product_type:
+                    all_product_types_v.append(product_type)
+            all_product_types_v = sorted(list(set(all_product_types_v)))
         except Exception:
             pass
-        filter_brand_v = st.selectbox("Filter by Brand", ["All"] + all_brands_v, key="view_filter_brand")
+        filter_product_type_v = st.selectbox("Filter by Product Type", ["All"] + all_product_types_v, key="view_filter_product_type")
     with colf3:
         filter_owner_v = st.selectbox("Filter by Owner", ["All", "Supplier", "Customer", "Competitor"], key="view_filter_owner")
 
@@ -3002,7 +3407,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         metadata = tds.get("metadata", {})
         if filter_category_v != "All" and metadata.get("category") != filter_category_v:
             continue
-        if filter_brand_v != "All" and tds.get("brand") != filter_brand_v:
+        if filter_product_type_v != "All" and metadata.get("product_type") != filter_product_type_v:
             continue
         if filter_owner_v != "All" and tds.get("owner") != filter_owner_v:
             continue
@@ -3022,11 +3427,12 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         st.info("📭 No TDS records found with current filters.")
         st.markdown("💡 Adjust filters or add new TDS records in the Add tab.")
     else:
-        # Group by brand
-        by_brand = {}
+        # Group by product type
+        by_product_type = {}
         for tds in filtered_tds:
-            brand = tds.get("brand", "Unknown")
-            by_brand.setdefault(brand, []).append(tds)
+            metadata = tds.get("metadata", {})
+            product_type = metadata.get("product_type", "Unknown")
+            by_product_type.setdefault(product_type, []).append(tds)
 
         # Export button
         col_export1, col_export2 = st.columns([1, 3])
@@ -3066,9 +3472,9 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
 
         st.markdown(f"**Found {len(filtered_tds)} TDS records**")
 
-        # Display TDS records grouped by brand
-        for brand, tds_list in by_brand.items():
-            with st.expander(f"🏷️ {brand} ({len(tds_list)} records)", expanded=True):
+        # Display TDS records grouped by product type
+        for product_type, tds_list in by_product_type.items():
+            with st.expander(f"🏷️ {product_type} ({len(tds_list)} records)", expanded=True):
                 for tds in tds_list:
                     tid = tds["id"]
                     metadata = tds.get("metadata", {})
@@ -3160,10 +3566,86 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">Chemical Master Data</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
 
-    sub_add, sub_manage, sub_view = st.tabs(["Add Chemical", "Manage Chemicals", "View Chemicals"])
+    # Track current chemical tab to detect tab switches
+    if "chemical_current_tab" not in st.session_state:
+        st.session_state["chemical_current_tab"] = "Add Chemical"
+    
+    # Create custom tab navigation with proper change detection
+    tab_col1, tab_col2, tab_col3 = st.columns(3)
+    
+    with tab_col1:
+        if st.button("Add Chemical", key="chem_tab_add", type="primary" if st.session_state.get("chemical_current_tab") == "Add Chemical" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("chemical_current_tab")
+            if previous_tab and previous_tab != "Add Chemical" and _has_unsaved_chemical_changes():
+                st.session_state["pending_chemical_tab"] = "Add Chemical"
+                st.rerun()
+            else:
+                st.session_state["chemical_current_tab"] = "Add Chemical"
+                st.rerun()
+    
+    with tab_col2:
+        if st.button("Manage Chemicals", key="chem_tab_manage", type="primary" if st.session_state.get("chemical_current_tab") == "Manage Chemicals" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("chemical_current_tab")
+            if previous_tab and previous_tab != "Manage Chemicals" and _has_unsaved_chemical_changes():
+                st.session_state["pending_chemical_tab"] = "Manage Chemicals"
+                st.rerun()
+            else:
+                st.session_state["chemical_current_tab"] = "Manage Chemicals"
+                st.rerun()
+    
+    with tab_col3:
+        if st.button("View Chemicals", key="chem_tab_view", type="primary" if st.session_state.get("chemical_current_tab") == "View Chemicals" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("chemical_current_tab")
+            if previous_tab and previous_tab != "View Chemicals" and _has_unsaved_chemical_changes():
+                st.session_state["pending_chemical_tab"] = "View Chemicals"
+                st.rerun()
+            else:
+                st.session_state["chemical_current_tab"] = "View Chemicals"
+                st.rerun()
+    
+    # Handle pending tab changes with confirmation dialog
+    if st.session_state.get("pending_chemical_tab"):
+        new_tab = st.session_state.get("pending_chemical_tab")
+        previous_tab = st.session_state.get("chemical_current_tab")
+        
+        if previous_tab == "Add Chemical":
+            st.warning("⚠️ You have unsaved changes in the Add Chemical tab.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("🗑️ Discard & Continue", key="discard_chem_add", type="primary"):
+                    _clear_chemical_editing_session()
+                    st.session_state["chemical_current_tab"] = new_tab
+                    st.session_state.pop("pending_chemical_tab")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key="cancel_chem_add"):
+                    st.session_state.pop("pending_chemical_tab")
+                    st.rerun()
+            with col3:
+                st.caption("Your unsaved changes will be lost if you continue.")
+            st.stop()
+        elif previous_tab == "Manage Chemicals":
+            st.warning("⚠️ You have unsaved changes in the Manage Chemicals tab.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("🗑️ Discard & Continue", key="discard_chem_manage", type="primary"):
+                    _clear_chemical_editing_session()
+                    st.session_state["chemical_current_tab"] = new_tab
+                    st.session_state.pop("pending_chemical_tab")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key="cancel_chem_manage"):
+                    st.session_state.pop("pending_chemical_tab")
+                    st.rerun()
+            with col3:
+                st.caption("Your unsaved changes will be lost if you continue.")
+            st.stop()
+    
+    # Get current tab for rendering
+    current_tab = st.session_state.get("chemical_current_tab", "Add Chemical")
 
     # -------- Add Chemical --------
-    with sub_add:
+    if current_tab == "Add Chemical":
         st.subheader("Add Chemical")
         if gemini_model:
             st.caption("Type a chemical name and press Enter to analyze with AI and check duplicates.")
@@ -3489,9 +3971,11 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                     st.rerun()
                 except Exception as e:
                     st.error(f"Failed to save chemical: {e}")
+        
+        # Add clear session button if there are unsaved changes
 
     # -------- Manage Chemicals --------
-    with sub_manage:
+    elif current_tab == "Manage Chemicals":
         st.subheader("Manage Chemicals")
         # Auth gate similar to Manage Products
         if not sb_user:
@@ -3651,7 +4135,7 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
                                 st.error(f"Failed to delete: {e}")
 
     # -------- View Chemicals --------
-    with sub_view:
+    elif current_tab == "View Chemicals":
         st.subheader("View Chemicals")
         vcol1, vcol2 = st.columns(2)
         with vcol1:
@@ -3764,8 +4248,105 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             unsafe_allow_html=True,
         )
 
-    # Tabs: Add Partner, Add Chemical, Manage, View
-    tab_add_partner, tab_add_chemical, tab_manage, tab_view = st.tabs(["Add Partner", "Add Chemical", "Manage", "View"])
+    # Create custom tab navigation with proper change detection
+    tab_col1, tab_col2, tab_col3, tab_col4 = st.columns(4)
+    
+    with tab_col1:
+        if st.button("Add Partner", key="partner_tab_add", type="primary" if st.session_state.get("partner_current_tab") == "Add Partner" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("partner_current_tab")
+            if previous_tab and previous_tab != "Add Partner" and _has_unsaved_partner_changes():
+                st.session_state["pending_partner_tab"] = "Add Partner"
+                st.rerun()
+            else:
+                st.session_state["partner_current_tab"] = "Add Partner"
+                st.rerun()
+    
+    with tab_col2:
+        if st.button("Add Chemical", key="partner_tab_chem", type="primary" if st.session_state.get("partner_current_tab") == "Add Chemical" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("partner_current_tab")
+            if previous_tab and previous_tab != "Add Chemical" and _has_unsaved_partner_changes():
+                st.session_state["pending_partner_tab"] = "Add Chemical"
+                st.rerun()
+            else:
+                st.session_state["partner_current_tab"] = "Add Chemical"
+                st.rerun()
+    
+    with tab_col3:
+        if st.button("Manage", key="partner_tab_manage", type="primary" if st.session_state.get("partner_current_tab") == "Manage" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("partner_current_tab")
+            if previous_tab and previous_tab != "Manage" and _has_unsaved_partner_changes():
+                st.session_state["pending_partner_tab"] = "Manage"
+                st.rerun()
+            else:
+                st.session_state["partner_current_tab"] = "Manage"
+                st.rerun()
+    
+    with tab_col4:
+        if st.button("View", key="partner_tab_view", type="primary" if st.session_state.get("partner_current_tab") == "View" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("partner_current_tab")
+            if previous_tab and previous_tab != "View" and _has_unsaved_partner_changes():
+                st.session_state["pending_partner_tab"] = "View"
+                st.rerun()
+            else:
+                st.session_state["partner_current_tab"] = "View"
+                st.rerun()
+    
+    # Handle pending partner tab changes with confirmation dialog
+    if st.session_state.get("pending_partner_tab"):
+        new_tab = st.session_state.get("pending_partner_tab")
+        previous_tab = st.session_state.get("partner_current_tab")
+        
+        if previous_tab == "Add Partner":
+            st.warning("⚠️ You have unsaved changes in the Add Partner tab.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("🗑️ Discard & Continue", key="discard_partner_add", type="primary"):
+                    _clear_partner_session()
+                    st.session_state["partner_current_tab"] = new_tab
+                    st.session_state.pop("pending_partner_tab")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key="cancel_partner_add"):
+                    st.session_state.pop("pending_partner_tab")
+                    st.rerun()
+            with col3:
+                st.caption("Your unsaved changes will be lost if you continue.")
+            st.stop()
+        elif previous_tab == "Add Chemical":
+            st.warning("⚠️ You have unsaved changes in the Add Chemical tab.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("🗑️ Discard & Continue", key="discard_partner_chem", type="primary"):
+                    _clear_partner_session()
+                    st.session_state["partner_current_tab"] = new_tab
+                    st.session_state.pop("pending_partner_tab")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key="cancel_partner_chem"):
+                    st.session_state.pop("pending_partner_tab")
+                    st.rerun()
+            with col3:
+                st.caption("Your unsaved changes will be lost if you continue.")
+            st.stop()
+        elif previous_tab == "Manage":
+            st.warning("⚠️ You have unsaved changes in the Manage tab.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("🗑️ Discard & Continue", key="discard_partner_manage", type="primary"):
+                    _clear_partner_session()
+                    st.session_state["partner_current_tab"] = new_tab
+                    st.session_state.pop("pending_partner_tab")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key="cancel_partner_manage"):
+                    st.session_state.pop("pending_partner_tab")
+                    st.rerun()
+            with col3:
+                st.caption("Your unsaved changes will be lost if you continue.")
+            st.stop()
+    
+    # Get current tab for rendering
+    current_partner_tab = st.session_state.get("partner_current_tab", "Add Partner")
 
     # Helpers for partner_data
     def fetch_partners():
@@ -3781,6 +4362,39 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             return (name or "").strip().lower()
         except Exception:
             return name or ""
+
+    def _fuzzy_match_partners(partner: str, country: str | None = None, threshold: float = 0.8) -> list[dict]:
+        """Find similar partners using fuzzy matching"""
+        try:
+            from difflib import SequenceMatcher
+            
+            pname = _normalize_partner_name(partner)
+            if not pname:
+                return []
+            
+            rows = supabase.table("partner_data").select("id,partner,partner_country").execute().data or []
+            similar_partners = []
+            
+            for r in rows:
+                rn = _normalize_partner_name(r.get("partner") or "")
+                rc = (r.get("partner_country") or "").strip().lower()
+                country_match = country is None or rc == (country or "").strip().lower()
+                
+                # Calculate similarity score
+                similarity = SequenceMatcher(None, pname, rn).ratio()
+                
+                if similarity >= threshold and country_match:
+                    similar_partners.append({
+                        "id": r.get("id"),
+                        "partner": r.get("partner"),
+                        "partner_country": r.get("partner_country"),
+                        "similarity": similarity
+                    })
+            
+            # Sort by similarity score (highest first)
+            return sorted(similar_partners, key=lambda x: x["similarity"], reverse=True)
+        except Exception:
+            return []
 
     def partner_exists(partner: str, country: str | None = None) -> bool:
         """Return True if a partner with same name (case-insensitive) and optional country exists."""
@@ -3921,13 +4535,13 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
         # Try tds_products JSON column
         try:
             supabase.table("partner_data").update({"tds_products": products}).eq("id", partner_id).execute()
-            return
+            st.stop()
         except Exception:
             pass
         # Try products JSON column
         try:
             supabase.table("partner_data").update({"products": products}).eq("id", partner_id).execute()
-            return
+            st.stop()
         except Exception:
             pass
         # Last resort: metadata JSON
@@ -3961,7 +4575,7 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
         except Exception:
             pass
 
-    with tab_add_partner:
+    if current_partner_tab == "Add Partner":
         st.subheader("Add Partner")
         partner_name = st.text_input("Partner Name *")
         # Country dropdown (ISO list)
@@ -3992,20 +4606,42 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
         st.markdown("---")
         st.caption("Fill in partner info and save. Assign chemicals in the 'Add Chemical' tab.")
 
+        # Check for similar partners as user types
+        if partner_name and partner_country:
+            similar_partners = _fuzzy_match_partners(partner_name, partner_country, threshold=0.7)
+            if similar_partners:
+                st.warning("⚠️ Similar partners found:")
+                for similar in similar_partners[:3]:  # Show top 3 matches
+                    similarity_percent = int(similar["similarity"] * 100)
+                    st.write(f"• {similar['partner']} ({similar['partner_country']}) - {similarity_percent}% similar")
+                st.caption("Please review the list above to avoid creating duplicate partners.")
+
         if st.button("Save Partner", type="primary"):
             if not (partner_name and partner_country):
                 st.error("Partner name and country are required")
             elif partner_exists(partner_name, partner_country):
                 st.error("Partner already exists with the same name and country")
             else:
-                resp = create_partner(partner_name, partner_country, [])
-                if resp is not None:
-                    st.success("✅ Partner saved")
-                    # Reset Add Partner inputs
-                    _reset_session_by_prefix(["pn_","pc_"]) 
-                    st.rerun()
+                # Check for very similar partners (high threshold) and block if found
+                very_similar = _fuzzy_match_partners(partner_name, partner_country, threshold=0.9)
+                if very_similar:
+                    st.error("❌ Cannot create partner: Very similar partner already exists!")
+                    st.write("**Similar partners found:**")
+                    for similar in very_similar:
+                        similarity_percent = int(similar["similarity"] * 100)
+                        st.write(f"• {similar['partner']} ({similar['partner_country']}) - {similarity_percent}% similar")
+                    st.caption("Please use a different name or check if this is the same partner.")
+                else:
+                    resp = create_partner(partner_name, partner_country, [])
+                    if resp is not None:
+                        st.success("✅ Partner saved")
+                        # Reset Add Partner inputs
+                        _reset_session_by_prefix(["pn_","pc_"]) 
+                        st.rerun()
+        
+        # Add clear session button if there are unsaved changes
 
-    with tab_add_chemical:
+    elif current_partner_tab == "Add Chemical":
         st.subheader("Add Chemical to Partner")
         partners = fetch_partners()
         if not partners:
@@ -4018,43 +4654,55 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             if not tds_records:
                 st.info("No TDS-backed chemicals found. Upload TDS in the TDS Master Data module.")
             else:
-                # Build label → id map as "Product Type — Brand — Product"
+                # Get already assigned chemicals for this partner
+                existing = partner_get_products(partner_obj)
+                already_ids = {item.get('tds_id') for item in existing if isinstance(item, dict)}
+                
+                # Build label → id map only for unassigned chemicals
                 options_map = {}
                 for r in tds_records:
+                    # Skip if already assigned to this partner
+                    if r.get('id') in already_ids:
+                        continue
+                    
                     meta = r
                     label = f"{meta.get('name') or 'Unnamed'} — {meta.get('category') or 'Others'}"
                     # Prefer showing Product Type — Brand
                     label = f"{meta.get('name') or 'Unnamed'}"
                     options_map[f"{label}"] = r.get('id')
-                existing = partner_get_products(partner_obj)
-                already_ids = {item.get('tds_id') for item in existing if isinstance(item, dict)}
-                st.markdown("**Select chemicals (with TDS) to assign**")
-                sel_labels = st.multiselect(
-                    "Chemicals",
-                    options=list(options_map.keys()),
-                )
-                if st.button("Assign to Partner", type="primary"):
-                    to_add = []
-                    for lb in sel_labels:
-                        tid = options_map.get(lb)
-                        if not tid or tid in already_ids:
-                            continue
-                        rec = next((r for r in tds_records if r.get('id') == tid), None)
-                        if not rec:
-                            continue
-                        to_add.append({
-                            "tds_id": rec.get("id"),
-                            "chemical_type_id": rec.get("chemical_type_id"),
-                            "name": rec.get("name"),
-                            "category": rec.get("category"),
-                        })
-                    new_list = existing + to_add
-                    partner_set_products(partner_obj.get("id"), new_list)
-                    st.success("Assigned chemicals to partner")
-                    # Reset selection inputs
-                    _reset_session_by_prefix(["rem_","add_more_"])
+                
+                if not options_map:
+                    st.info("✅ All available chemicals are already assigned to this partner.")
+                else:
+                    st.markdown("**Select chemicals (with TDS) to assign**")
+                    sel_labels = st.multiselect(
+                        "Chemicals",
+                        options=list(options_map.keys()),
+                    )
+                    
+                    if st.button("Assign to Partner", type="primary"):
+                        to_add = []
+                        for lb in sel_labels:
+                            tid = options_map.get(lb)
+                            if not tid or tid in already_ids:
+                                continue
+                            rec = next((r for r in tds_records if r.get('id') == tid), None)
+                            if not rec:
+                                continue
+                            to_add.append({
+                                "tds_id": rec.get("id"),
+                                "chemical_type_id": rec.get("chemical_type_id"),
+                                "name": rec.get("name"),
+                                "category": rec.get("category"),
+                            })
+                        new_list = existing + to_add
+                        partner_set_products(partner_obj.get("id"), new_list)
+                        st.success("Assigned chemicals to partner")
+                        # Reset selection inputs
+                        _reset_session_by_prefix(["rem_","add_more_"])
+                        st.rerun()
 
-    with tab_manage:
+    elif current_partner_tab == "Manage":
         st.subheader("Manage Partners")
         partners = fetch_partners()
         if not partners:
@@ -4147,9 +4795,22 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                             elif partner_exists(e_name, e_country) and _normalize_partner_name(e_name) != _normalize_partner_name(p.get("partner") or ""):
                                 st.error("Another partner already exists with the same name and country")
                             else:
-                                update_partner(pid, {"partner": e_name.strip(), "partner_country": e_country.strip()})
-                                st.success("Updated")
-                                st.rerun()
+                                # Check for very similar partners (excluding current partner)
+                                very_similar = _fuzzy_match_partners(e_name, e_country, threshold=0.9)
+                                # Filter out current partner from similar matches
+                                very_similar = [s for s in very_similar if s["id"] != pid]
+                                
+                                if very_similar:
+                                    st.error("❌ Cannot update partner: Very similar partner already exists!")
+                                    st.write("**Similar partners found:**")
+                                    for similar in very_similar:
+                                        similarity_percent = int(similar["similarity"] * 100)
+                                        st.write(f"• {similar['partner']} ({similar['partner_country']}) - {similarity_percent}% similar")
+                                    st.caption("Please use a different name or check if this is the same partner.")
+                                else:
+                                    update_partner(pid, {"partner": e_name.strip(), "partner_country": e_country.strip()})
+                                    st.success("Updated")
+                                    st.rerun()
                     with btn_col2:
                         if st.button("🗑️ Delete", key=f"pd_{pid}"):
                             delete_partner(pid)
@@ -4157,7 +4818,7 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                             st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
 
-    with tab_view:
+    elif current_partner_tab == "View":
         st.subheader("View Partners")
         partners = fetch_partners()
         if not partners:
@@ -4329,8 +4990,41 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
         except Exception:
             return []
 
-    GLOBAL_INCOTERMS = ["FOB", "CIF Mombasa", "SEZ MCF"]
-    KENYA_INCOTERMS = ["Nairobi", "FCA Moyale", "Addis"]
+    def _fetch_tds_for_partner(partner_id: str) -> list[dict]:
+        """Get TDS records assigned to a specific partner"""
+        try:
+            # Get partner's assigned products
+            partner_resp = supabase.table("partner_data").select("products").eq("id", partner_id).execute()
+            if not partner_resp.data:
+                return []
+            
+            partner_data = partner_resp.data[0]
+            assigned_products = partner_data.get("products", [])
+            if not assigned_products:
+                return []
+            
+            # Get TDS IDs from assigned products
+            tds_ids = [p.get("tds_id") for p in assigned_products if p.get("tds_id")]
+            if not tds_ids:
+                return []
+            
+            # Fetch TDS records for these IDs
+            rows = supabase.table("tds_data").select("id,chemical_type_id,brand,metadata").in_("id", tds_ids).order("created_at", desc=True).execute().data or []
+            items = []
+            for r in rows:
+                meta = r.get("metadata") or {}
+                items.append({
+                    "id": r.get("id"),
+                    "chemical_type_id": r.get("chemical_type_id"),
+                    "name": meta.get("product_name") or meta.get("generic_product_name") or (r.get("brand") or "Unnamed"),
+                    "category": meta.get("category") or "Others",
+                })
+            return items
+        except Exception:
+            return []
+
+    GLOBAL_INCOTERMS = ["FOB", "CIF Mombasa", "SEZ MCF", "Nairobi", "FCA", "Addis Ababa"]
+    KENYA_INCOTERMS = ["Kenya", "Nairobi", "FCA Moyale", "Addis"]
 
     def _incoterm_rows_default():
         rows = []
@@ -4386,24 +5080,110 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
             st.info("Pricing table not found yet. It will be created when you save your first record.")
             return []
 
-    tab_p_add, tab_p_manage, tab_p_view = st.tabs(["Add", "Manage", "View"])
+    # Create custom tab navigation with proper change detection
+    tab_col1, tab_col2, tab_col3 = st.columns(3)
+    
+    with tab_col1:
+        if st.button("Add", key="pricing_tab_add", type="primary" if st.session_state.get("pricing_current_tab") == "Add" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("pricing_current_tab")
+            if previous_tab and previous_tab != "Add" and _has_unsaved_pricing_changes():
+                st.session_state["pending_pricing_tab"] = "Add"
+                st.rerun()
+            else:
+                st.session_state["pricing_current_tab"] = "Add"
+                st.rerun()
+    
+    with tab_col2:
+        if st.button("Manage", key="pricing_tab_manage", type="primary" if st.session_state.get("pricing_current_tab") == "Manage" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("pricing_current_tab")
+            if previous_tab and previous_tab != "Manage" and _has_unsaved_pricing_changes():
+                st.session_state["pending_pricing_tab"] = "Manage"
+                st.rerun()
+            else:
+                st.session_state["pricing_current_tab"] = "Manage"
+                st.rerun()
+    
+    with tab_col3:
+        if st.button("View", key="pricing_tab_view", type="primary" if st.session_state.get("pricing_current_tab") == "View" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("pricing_current_tab")
+            if previous_tab and previous_tab != "View" and _has_unsaved_pricing_changes():
+                st.session_state["pending_pricing_tab"] = "View"
+                st.rerun()
+            else:
+                st.session_state["pricing_current_tab"] = "View"
+                st.rerun()
+    
+    # Handle pending pricing tab changes with confirmation dialog
+    if st.session_state.get("pending_pricing_tab"):
+        new_tab = st.session_state.get("pending_pricing_tab")
+        previous_tab = st.session_state.get("pricing_current_tab")
+        
+        if previous_tab == "Add":
+            st.warning("⚠️ You have unsaved changes in the Add tab.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("🗑️ Discard & Continue", key="discard_pricing_add", type="primary"):
+                    _clear_pricing_session()
+                    st.session_state["pricing_current_tab"] = new_tab
+                    st.session_state.pop("pending_pricing_tab")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key="cancel_pricing_add"):
+                    st.session_state.pop("pending_pricing_tab")
+                    st.rerun()
+            with col3:
+                st.caption("Your unsaved changes will be lost if you continue.")
+            st.stop()
+        elif previous_tab == "Manage":
+            st.warning("⚠️ You have unsaved changes in the Manage tab.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("🗑️ Discard & Continue", key="discard_pricing_manage", type="primary"):
+                    _clear_pricing_session()
+                    st.session_state["pricing_current_tab"] = new_tab
+                    st.session_state.pop("pending_pricing_tab")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key="cancel_pricing_manage"):
+                    st.session_state.pop("pending_pricing_tab")
+                    st.rerun()
+            with col3:
+                st.caption("Your unsaved changes will be lost if you continue.")
+            st.stop()
+    
+    # Get current tab for rendering
+    current_pricing_tab = st.session_state.get("pricing_current_tab", "Add")
 
     # Add
-    with tab_p_add:
+    if current_pricing_tab == "Add":
         colp1, colp2 = st.columns(2)
         partners = _fetch_partners_simple()
         partner_opts = {f"{p.get('partner')} ({p.get('partner_country')})": p.get("id") for p in partners}
-        tds_items = _fetch_tds_simple()
-        tds_opts = {f"{t.get('name')} — {t.get('category')}": t.get("id") for t in tds_items}
 
         with colp1:
             _partner_placeholder = "— Select —"
             _partner_labels = [_partner_placeholder] + list(partner_opts.keys()) if partner_opts else [_partner_placeholder]
             sel_partner_label = st.selectbox("Partner", _partner_labels, index=0)
+        
+        # Get selected partner ID
+        sel_partner_id = partner_opts.get(sel_partner_label) if sel_partner_label != _partner_placeholder else None
+        
+        # Get TDS items only for the selected partner
+        if sel_partner_id:
+            tds_items = _fetch_tds_for_partner(sel_partner_id)
+        else:
+            tds_items = []
+        
+        tds_opts = {f"{t.get('name')} — {t.get('category')}": t.get("id") for t in tds_items}
+
         with colp2:
             _tds_placeholder = "— Select —"
             _tds_labels = [_tds_placeholder] + list(tds_opts.keys()) if tds_opts else [_tds_placeholder]
             sel_tds_label = st.selectbox("Select TDS", _tds_labels, index=0)
+            
+            # Show message if no TDS available for selected partner
+            if sel_partner_label != _partner_placeholder and not tds_items:
+                st.info("ℹ️ No chemicals assigned to this partner. Please assign chemicals in Partner Master Data first.")
 
         # Auto-clear pricing inputs when Partner or TDS selection changes
         _prev_partner = st.session_state.get("pricing_prev_partner_label")
@@ -4442,10 +5222,10 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                 with c5:
                     st.text_input("Pricing ETB", value=r.get("price_etb", ""), key=f"{prefix}_{_pricing_token}_pe_{i}")
 
-        st.markdown("**Global Sourcing (FOB, CIF Mombasa, SEZ MCF)**")
+        st.markdown("**Global Sourcing (FOB, CIF Mombasa, SEZ MCF, Nairobi, FCA, Addis Ababa)**")
         _render_rows("g", global_rows)
 
-        st.markdown("**Kenya Pricing & Costing (Nairobi, FCA, Addis)**")
+        st.markdown("**Kenya Pricing & Costing (Kenya, Nairobi, FCA Moyale, Addis)**")
         _render_rows("k", kenya_rows)
 
         # Save combined
@@ -4475,9 +5255,11 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                     st.session_state["pricing_form_reset_token"] = str(uuid.uuid4())
                     st.session_state["pricing_rows_add"] = _incoterm_rows_default()
                     st.rerun()
+        
+        # Add clear session button if there are unsaved changes
 
     # Manage
-    with tab_p_manage:
+    elif current_pricing_tab == "Manage":
         records = _pricing_fetch_all()
         if not records:
             st.info("No pricing records found")
@@ -4526,8 +5308,8 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                             with c5:
                                 st.text_input("Pricing ETB", value=r.get("price_etb", ""), key=f"pm_pe_{prefix}_{rid}_{i}")
 
-                    _render_manage("g", g_rows, "Global Sourcing (FOB, CIF Mombasa, SEZ MCF)")
-                    _render_manage("k", k_rows, "Kenya Pricing & Costing (Nairobi, FCA, Addis)")
+                    _render_manage("g", g_rows, "Global Sourcing (FOB, CIF Mombasa, SEZ MCF, Nairobi, FCA, Addis Ababa)")
+                    _render_manage("k", k_rows, "Kenya Pricing & Costing (Kenya, Nairobi, FCA Moyale, Addis)")
 
                     mc1, mc2, mc3 = st.columns([1,1,1])
                     with mc1:
@@ -4559,7 +5341,7 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                         pass
 
     # View
-    with tab_p_view:
+    elif current_pricing_tab == "View":
         records = _pricing_fetch_all()
         if not records:
             st.info("No pricing records found")
@@ -4592,7 +5374,7 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                         st.markdown(f"**{title}**")
                         if not data_rows:
                             st.caption("No rows")
-                            return
+                            st.stop()
                         try:
                             import pandas as _pd
                             df = _pd.DataFrame(data_rows, columns=["incoterm","cost_usd","cost_etb","price_usd","price_etb"])  # type: ignore
@@ -4602,7 +5384,11 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                             for r in data_rows:
                                 st.write(f"- {r.get('incoterm','')} | {r.get('cost_usd','')} | {r.get('cost_etb','')} | {r.get('price_usd','')} | {r.get('price_etb','')}")
 
-                    _render_table("Global Sourcing (FOB, CIF Mombasa, SEZ MCF)", g_rows)
-                    _render_table("Kenya Pricing & Costing (Nairobi, FCA, Addis)", k_rows)
+                    # First table shows ALL incoterms (Global + Kenya + Others)
+                    all_rows = g_rows + k_rows + o_rows
+                    _render_table("All Pricing & Costing (FOB, CIF Mombasa, SEZ MCF, Nairobi, FCA, Addis Ababa)", all_rows)
+                    
+                    # Second table shows only Kenya-specific incoterms
+                    _render_table("Kenya Pricing & Costing (Kenya, Nairobi, FCA Moyale, Addis)", k_rows)
 
     st.markdown('</div>', unsafe_allow_html=True)
