@@ -955,6 +955,29 @@ FIXED_CATEGORIES = [
     "Others",
 ]
 
+COUNTRIES = [
+    "Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda","Argentina","Armenia","Australia","Austria",
+    "Azerbaijan","Bahamas","Bahrain","Bangladesh","Barbados","Belarus","Belgium","Belize","Benin","Bhutan",
+    "Bolivia","Bosnia and Herzegovina","Botswana","Brazil","Brunei","Bulgaria","Burkina Faso","Burundi","Cabo Verde","Cambodia",
+    "Cameroon","Canada","Central African Republic","Chad","Chile","China","Colombia","Comoros","Congo","Costa Rica",
+    "Croatia","Cuba","Cyprus","Czech Republic","Denmark","Djibouti","Dominica","Dominican Republic","Ecuador","Egypt",
+    "El Salvador","Equatorial Guinea","Eritrea","Estonia","Eswatini","Ethiopia","Fiji","Finland","France","Gabon",
+    "Gambia","Georgia","Germany","Ghana","Greece","Grenada","Guatemala","Guinea","Guinea-Bissau","Guyana",
+    "Haiti","Honduras","Hungary","Iceland","India","Indonesia","Iran","Iraq","Ireland","Israel",
+    "Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya","Kiribati","Kuwait","Kyrgyzstan","Laos",
+    "Latvia","Lebanon","Lesotho","Liberia","Libya","Liechtenstein","Lithuania","Luxembourg","Madagascar","Malawi",
+    "Malaysia","Maldives","Mali","Malta","Marshall Islands","Mauritania","Mauritius","Mexico","Micronesia","Moldova",
+    "Monaco","Mongolia","Montenegro","Morocco","Mozambique","Myanmar","Namibia","Nauru","Nepal","Netherlands",
+    "New Zealand","Nicaragua","Niger","Nigeria","North Korea","North Macedonia","Norway","Oman","Pakistan","Palau",
+    "Palestine","Panama","Papua New Guinea","Paraguay","Peru","Philippines","Poland","Portugal","Qatar","Romania",
+    "Russia","Rwanda","Saint Kitts and Nevis","Saint Lucia","Saint Vincent and the Grenadines","Samoa","San Marino","Sao Tome and Principe","Saudi Arabia","Senegal",
+    "Serbia","Seychelles","Sierra Leone","Singapore","Slovakia","Slovenia","Solomon Islands","Somalia","South Africa","South Korea",
+    "South Sudan","Spain","Sri Lanka","Sudan","Suriname","Sweden","Switzerland","Syria","Taiwan","Tajikistan",
+    "Tanzania","Thailand","Timor-Leste","Togo","Tonga","Trinidad and Tobago","Tunisia","Turkey","Turkmenistan","Tuvalu",
+    "Uganda","Ukraine","United Arab Emirates","United Kingdom","United States","Uruguay","Uzbekistan","Vanuatu","Vatican City",
+    "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe"
+]
+
 PREDEFINED_TYPES = [
     "RDP",
     "HPMC",
@@ -1515,7 +1538,7 @@ def _has_unsaved_partner_changes() -> bool:
         if current_tab in ["Add Partner", "Add Chemical"]:
             # Check for partner form data that might indicate editing
             excluded_keys = {
-                "partner_go_manage", "partner_view_open_id", "partner_current_tab"
+                "partner_go_manage", "partner_current_tab"
             }
             partner_keys = [k for k in st.session_state.keys() if k.startswith("partner_") or k.startswith("add_more_")]
             if any(k for k in partner_keys if k not in excluded_keys):
@@ -1568,16 +1591,33 @@ def _has_unsaved_pricing_changes() -> bool:
         # Check for unsaved changes in Add tab
         if current_tab == "Add":
             # Check for pricing form data that might indicate editing
-            pricing_keys = [k for k in st.session_state.keys() if k.startswith("pricing_")]
+            # Exclude navigation keys
+            excluded_keys = {
+                "pricing_current_tab", "pricing_prev_partner_label", "pricing_prev_tds_label", 
+                "pricing_form_reset_token", "pending_pricing_tab"
+            }
+            pricing_keys = [k for k in st.session_state.keys() if k.startswith("pricing_") and k not in excluded_keys]
             if pricing_keys:
+                return True
+            
+            # Check for form input keys (like g_0_inc_0, k_0_cu_1, etc.)
+            form_keys = [k for k in st.session_state.keys() if any(k.startswith(prefix) for prefix in ["g_", "k_", "o_"]) and any(k.endswith(suffix) for suffix in ["_inc_", "_cu_", "_ce_", "_pu_", "_pe_"])]
+            if form_keys:
                 return True
         
         # Check for unsaved changes in Manage tab
         elif current_tab == "Manage":
             # Check for any pricing manage form data that might indicate editing
-            # Look for form keys that start with 'pr' followed by the pricing ID (like 'prn_', 'prc_', etc.)
-            manage_keys = [k for k in st.session_state.keys() if k.startswith("prn_") or k.startswith("prc_") or k.startswith("prs_") or k.startswith("prd_")]
+            # Look for form keys that start with 'pm_' (pricing manage)
+            manage_keys = [k for k in st.session_state.keys() if k.startswith("pm_")]
             if manage_keys:
+                return True
+        
+        # Check for unsaved changes in View tab
+        elif current_tab == "View":
+            # Check for any view-related form data that might indicate editing
+            view_keys = [k for k in st.session_state.keys() if k.startswith("pv_")]
+            if view_keys:
                 return True
             
         return False
@@ -1587,15 +1627,27 @@ def _has_unsaved_pricing_changes() -> bool:
 def _clear_pricing_session():
     """Clear all pricing related session state"""
     try:
+        # Preserve navigation keys
+        preserve_keys = {
+            "pricing_current_tab"
+        }
+        
         keys_to_remove = []
         for key in st.session_state.keys():
-            if key.startswith("pricing_"):
+            # Clear pricing form data but preserve navigation
+            if key.startswith("pricing_") and key not in preserve_keys:
                 keys_to_remove.append(key)
-        
-        # Also clear manage form data (keys that start with 'pr' followed by underscore and ID)
-        for key in st.session_state.keys():
-            if (key.startswith("prn_") or key.startswith("prc_") or key.startswith("prs_") or 
-                key.startswith("prd_")):
+            
+            # Clear manage form data (keys that start with 'pm_')
+            if key.startswith("pm_"):
+                keys_to_remove.append(key)
+            
+            # Clear view form data (keys that start with 'pv_')
+            if key.startswith("pv_"):
+                keys_to_remove.append(key)
+            
+            # Clear form input keys (like g_0_inc_0, k_0_cu_1, etc.)
+            if any(key.startswith(prefix) for prefix in ["g_", "k_", "o_"]) and any(key.endswith(suffix) for suffix in ["_inc_", "_cu_", "_ce_", "_pu_", "_pe_"]):
                 keys_to_remove.append(key)
         
         for key in keys_to_remove:
@@ -3153,7 +3205,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                 by_cat.setdefault(category, {}).setdefault(brand, []).append(tds)
 
             for cat, brands in by_cat.items():
-                with st.expander(f"📁 {cat}", expanded=True):
+                with st.expander(f"📁 {cat}", expanded=False):
                     for brand, items in brands.items():
                         for tds in items:
                             tid = tds["id"]
@@ -3187,7 +3239,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                 except Exception:
                                     _nzw_t = 0
                                 _zw_sfx_t = "\u200B" * _nzw_t if _nzw_t else ""
-                                with st.expander(f"Edit: {metadata.get('product_name', 'Unknown Product')}{_zw_sfx_t}", expanded=True):
+                                with st.expander(f"Edit: {metadata.get('product_name', 'Unknown Product')}{_zw_sfx_t}", expanded=False):
                                     # Editable fields for TDS data
                                     ename = st.text_input("Product Name", value=metadata.get("product_name", ""), key=f"n_{tid}")
                                     ecat = st.selectbox("Category", FIXED_CATEGORIES, index=FIXED_CATEGORIES.index(metadata.get("category", "Others")), key=f"c_{tid}")
@@ -3474,7 +3526,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
 
         # Display TDS records grouped by product type
         for product_type, tds_list in by_product_type.items():
-            with st.expander(f"🏷️ {product_type} ({len(tds_list)} records)", expanded=True):
+            with st.expander(f"🏷️ {product_type} ({len(tds_list)} records)", expanded=False):
                 for tds in tds_list:
                     tid = tds["id"]
                     metadata = tds.get("metadata", {})
@@ -3512,7 +3564,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
 
                         # View Details Modal
                         if st.session_state.get(f"viewing_{tid}"):
-                            with st.expander(f"📋 Full Details: {metadata.get('product_name', 'Unknown Product')}", expanded=True):
+                            with st.expander(f"📋 Full Details: {metadata.get('product_name', 'Unknown Product')}", expanded=False):
                                 st.markdown("**Product Information**")
                                 st.write(f"**Product Name:** {metadata.get('product_name', 'N/A')}")
                                 st.write(f"**Generic Product Name:** {metadata.get('generic_product_name', 'N/A')}")
@@ -4507,51 +4559,30 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
             return None
 
     def partner_get_products(partner_row: dict) -> list[dict]:
-        """Return assigned products from whichever column exists.
-        Checks: 'tds_products', then 'products', then 'metadata.tds_products'.
+        """Return assigned products from metadata.tds_products field.
+        Since tds_products and products columns don't exist, we only check metadata.tds_products.
         """
-        try:
-            if isinstance(partner_row.get("tds_products"), list):
-                return partner_row.get("tds_products") or []
-        except Exception:
-            pass
-        try:
-            if isinstance(partner_row.get("products"), list):
-                return partner_row.get("products") or []
-        except Exception:
-            pass
         try:
             md = partner_row.get("metadata") or {}
             if isinstance(md.get("tds_products"), list):
-                return md.get("tds_products") or []
+                result = md.get("tds_products") or []
+                if result:
+                    return result
         except Exception:
             pass
         return []
 
     def partner_set_products(partner_id: str, products: list[dict]) -> None:
-        """Persist assigned products into a column that exists.
-        Tries 'tds_products' then 'products'. Falls back to 'metadata' only if available.
+        """Persist assigned products into metadata field.
+        Since tds_products and products columns don't exist, we use metadata.tds_products.
         """
-        # Try tds_products JSON column
-        try:
-            supabase.table("partner_data").update({"tds_products": products}).eq("id", partner_id).execute()
-            st.stop()
-        except Exception:
-            pass
-        # Try products JSON column
-        try:
-            supabase.table("partner_data").update({"products": products}).eq("id", partner_id).execute()
-            st.stop()
-        except Exception:
-            pass
-        # Last resort: metadata JSON
         try:
             curr = supabase.table("partner_data").select("metadata").eq("id", partner_id).limit(1).execute()
             curr_meta = ((curr.data or [{}])[0] or {}).get("metadata") or {}
             curr_meta["tds_products"] = products
             supabase.table("partner_data").update({"metadata": curr_meta}).eq("id", partner_id).execute()
-        except Exception:
-            # Silently ignore; UI will still continue
+        except Exception as e:
+            st.error(f"Failed to update partner products: {e}")
             pass
 
     def _reset_session_keys(keys: list[str]):
@@ -4579,28 +4610,6 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
         st.subheader("Add Partner")
         partner_name = st.text_input("Partner Name *")
         # Country dropdown (ISO list)
-        COUNTRIES = [
-            "Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda","Argentina","Armenia","Australia","Austria",
-            "Azerbaijan","Bahamas","Bahrain","Bangladesh","Barbados","Belarus","Belgium","Belize","Benin","Bhutan",
-            "Bolivia","Bosnia and Herzegovina","Botswana","Brazil","Brunei","Bulgaria","Burkina Faso","Burundi","Cabo Verde","Cambodia",
-            "Cameroon","Canada","Central African Republic","Chad","Chile","China","Colombia","Comoros","Congo (Congo-Brazzaville)","Costa Rica",
-            "Côte d’Ivoire","Croatia","Cuba","Cyprus","Czechia","Democratic Republic of the Congo","Denmark","Djibouti","Dominica","Dominican Republic",
-            "Ecuador","Egypt","El Salvador","Equatorial Guinea","Eritrea","Estonia","Eswatini","Ethiopia","Fiji","Finland",
-            "France","Gabon","Gambia","Georgia","Germany","Ghana","Greece","Grenada","Guatemala","Guinea",
-            "Guinea-Bissau","Guyana","Haiti","Honduras","Hungary","Iceland","India","Indonesia","Iran","Iraq",
-            "Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya","Kiribati","Kuwait",
-            "Kyrgyzstan","Laos","Latvia","Lebanon","Lesotho","Liberia","Libya","Liechtenstein","Lithuania","Luxembourg",
-            "Madagascar","Malawi","Malaysia","Maldives","Mali","Malta","Marshall Islands","Mauritania","Mauritius","Mexico",
-            "Micronesia","Moldova","Monaco","Mongolia","Montenegro","Morocco","Mozambique","Myanmar","Namibia","Nauru",
-            "Nepal","Netherlands","New Zealand","Nicaragua","Niger","Nigeria","North Korea","North Macedonia","Norway","Oman",
-            "Pakistan","Palau","Panama","Papua New Guinea","Paraguay","Peru","Philippines","Poland","Portugal","Qatar",
-            "Romania","Russia","Rwanda","Saint Kitts and Nevis","Saint Lucia","Saint Vincent and the Grenadines","Samoa","San Marino","Sao Tome and Principe","Saudi Arabia",
-            "Senegal","Serbia","Seychelles","Sierra Leone","Singapore","Slovakia","Slovenia","Solomon Islands","Somalia","South Africa",
-            "South Korea","South Sudan","Spain","Sri Lanka","Sudan","Suriname","Sweden","Switzerland","Syria","Taiwan",
-            "Tajikistan","Tanzania","Thailand","Timor-Leste","Togo","Tonga","Trinidad and Tobago","Tunisia","Turkey","Turkmenistan",
-            "Tuvalu","Uganda","Ukraine","United Arab Emirates","United Kingdom","United States","Uruguay","Uzbekistan","Vanuatu","Vatican City",
-            "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe"
-        ]
         partner_country = st.selectbox("Partner Country *", COUNTRIES)
         # Add Partner is now only for creating the partner record
         st.markdown("---")
@@ -4764,6 +4773,8 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                     # 3) Only show unlinked TDS for adding
                     current_ids = {it.get('tds_id') for it in assigned if isinstance(it, dict)}
                     unlinked = [r for r in tds_records_all if r.get('id') not in current_ids]
+                    
+                    
                     opts = {f"{r.get('name') or 'Unnamed'}": r.get('id') for r in unlinked}
                     add_labels = st.multiselect("Select chemicals to add", list(opts.keys()), key=f"add_more_{pid}")
                     if st.button("Add Selected", key=f"btn_add_more_{pid}"):
@@ -4824,15 +4835,6 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
         if not partners:
             st.info("No partners found")
         else:
-            # Track which partner is open; ensure only one expander open at a time
-            open_partner_id = st.session_state.get("partner_view_open_id")
-            # Default to first partner open if none selected yet
-            try:
-                if open_partner_id is None and partners:
-                    st.session_state["partner_view_open_id"] = partners[0].get("id")
-                    open_partner_id = st.session_state["partner_view_open_id"]
-            except Exception:
-                pass
             # Fetch all TDS once for matching
             try:
                 tds_records_all = supabase.table("tds_data").select("id,brand,metadata,chemical_type_id").execute().data or []
@@ -4925,17 +4927,8 @@ if st.session_state.get("main_section") == "partner_master" and has_sourcing_mas
                                 "tds_file_name": meta.get("tds_file_name"),
                             })
 
-                is_open = (p.get("id") == open_partner_id)
-                # Controls to open/close this partner view
-                colpv1, colpv2 = st.columns([1,6])
-                with colpv1:
-                    if not is_open and st.button("👁️ View", key=f"pv_open_{p.get('id')}"):
-                        st.session_state["partner_view_open_id"] = p.get("id")
-                        st.rerun()
-                    if is_open and st.button("🔒 Close", key=f"pv_close_{p.get('id')}"):
-                        st.session_state.pop("partner_view_open_id", None)
-                        st.rerun()
-                with st.expander(f"🤝 {pname} ({pcountry})", expanded=is_open):
+                # Display partner information directly without view/close buttons
+                with st.expander(f"🤝 {pname} ({pcountry})", expanded=False):
                     # Header info (view-only)
                     cols = st.columns([3,2])
                     with cols[0]:
@@ -4993,13 +4986,23 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
     def _fetch_tds_for_partner(partner_id: str) -> list[dict]:
         """Get TDS records assigned to a specific partner"""
         try:
-            # Get partner's assigned products
-            partner_resp = supabase.table("partner_data").select("products").eq("id", partner_id).execute()
+            # Get partner's assigned products - check all possible fields like partner_get_products does
+            partner_resp = supabase.table("partner_data").select("metadata").eq("id", partner_id).execute()
             if not partner_resp.data:
+                st.error(f"❌ No partner found with ID: {partner_id}")
                 return []
             
             partner_data = partner_resp.data[0]
-            assigned_products = partner_data.get("products", [])
+            
+            # Get assigned products from metadata field
+            assigned_products = []
+            try:
+                md = partner_data.get("metadata") or {}
+                if isinstance(md.get("tds_products"), list):
+                    assigned_products = md.get("tds_products") or []
+            except Exception:
+                pass
+            
             if not assigned_products:
                 return []
             
@@ -5090,6 +5093,9 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                 st.session_state["pending_pricing_tab"] = "Add"
                 st.rerun()
             else:
+                # Clear session when switching to Add tab
+                if previous_tab and previous_tab != "Add":
+                    _clear_pricing_session()
                 st.session_state["pricing_current_tab"] = "Add"
                 st.rerun()
     
@@ -5100,6 +5106,9 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                 st.session_state["pending_pricing_tab"] = "Manage"
                 st.rerun()
             else:
+                # Clear session when switching to Manage tab
+                if previous_tab and previous_tab != "Manage":
+                    _clear_pricing_session()
                 st.session_state["pricing_current_tab"] = "Manage"
                 st.rerun()
     
@@ -5110,6 +5119,9 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                 st.session_state["pending_pricing_tab"] = "View"
                 st.rerun()
             else:
+                # Clear session when switching to View tab
+                if previous_tab and previous_tab != "View":
+                    _clear_pricing_session()
                 st.session_state["pricing_current_tab"] = "View"
                 st.rerun()
     
@@ -5145,6 +5157,22 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                     st.rerun()
             with col2:
                 if st.button("❌ Cancel", key="cancel_pricing_manage"):
+                    st.session_state.pop("pending_pricing_tab")
+                    st.rerun()
+            with col3:
+                st.caption("Your unsaved changes will be lost if you continue.")
+            st.stop()
+        elif previous_tab == "View":
+            st.warning("⚠️ You have unsaved changes in the View tab.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("🗑️ Discard & Continue", key="discard_pricing_view", type="primary"):
+                    _clear_pricing_session()
+                    st.session_state["pricing_current_tab"] = new_tab
+                    st.session_state.pop("pending_pricing_tab")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key="cancel_pricing_view"):
                     st.session_state.pop("pending_pricing_tab")
                     st.rerun()
             with col3:
@@ -5200,6 +5228,16 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
         # Editable pricing table
         st.markdown("---")
         st.subheader("Pricing & Costing Table")
+        
+        # Check if both partner and TDS are selected
+        sel_partner_id = partner_opts.get(sel_partner_label) if sel_partner_label != _partner_placeholder else None
+        sel_tds_id = tds_opts.get(sel_tds_label) if sel_tds_label != _tds_placeholder else None
+        both_selected = sel_partner_id and sel_tds_id
+        
+        if not both_selected:
+            st.warning("⚠️ Please select both Partner and TDS to add pricing data")
+            st.stop()
+        
         if "pricing_rows_add" not in st.session_state:
             st.session_state["pricing_rows_add"] = _incoterm_rows_default()
 
@@ -5242,19 +5280,15 @@ if st.session_state.get("main_section") == "pricing" and has_sourcing_master_acc
                     })
                 return out
             out_rows = _collect("g", global_rows) + _collect("k", kenya_rows)
-            pid = partner_opts.get(sel_partner_label) if sel_partner_label and sel_partner_label != _partner_placeholder else None
-            tid = tds_opts.get(sel_tds_label) if sel_tds_label and sel_tds_label != _tds_placeholder else None
-            if not pid or not tid:
-                st.error("Please select Partner and TDS")
-            else:
-                resp = _pricing_table_add(pid, tid, out_rows)
-                if resp is not None:
-                    st.success("✅ Pricing saved")
-                    # Reset add pricing session state and bump token so widgets clear
-                    _reset_session_keys(["pricing_rows_add"]) 
-                    st.session_state["pricing_form_reset_token"] = str(uuid.uuid4())
-                    st.session_state["pricing_rows_add"] = _incoterm_rows_default()
-                    st.rerun()
+            # Both partner and TDS are already validated above, so we can proceed directly
+            resp = _pricing_table_add(sel_partner_id, sel_tds_id, out_rows)
+            if resp is not None:
+                st.success("✅ Pricing saved")
+                # Reset add pricing session state and bump token so widgets clear
+                _reset_session_keys(["pricing_rows_add"]) 
+                st.session_state["pricing_form_reset_token"] = str(uuid.uuid4())
+                st.session_state["pricing_rows_add"] = _incoterm_rows_default()
+                st.rerun()
         
         # Add clear session button if there are unsaved changes
 
