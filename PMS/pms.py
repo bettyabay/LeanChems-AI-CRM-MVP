@@ -2218,9 +2218,9 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             selected_type = ""
 
         # Product Code after selecting category and type
-        name = st.text_input("Product Code *", placeholder="Unique product code")
+        name = st.text_input("Product Code *", placeholder="Unique product code", key="tds_product_code")
 
-        description = st.text_area("Description", placeholder="Optional description", height=100)
+        description = st.text_area("Description", placeholder="Optional description", height=100, key="tds_description")
 
         st.markdown("---")
         st.subheader("Product Status")
@@ -2228,7 +2228,8 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         _yn_sel = st.selectbox(
             "Is it Leanchems legacy/existing/coming product?",
             [_yn_placeholder, "Yes", "No"],
-            index=0
+            index=0,
+            key="tds_product_status"
         )
         is_leanchems_product = None if _yn_sel == _yn_placeholder else _yn_sel
 
@@ -2238,7 +2239,8 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         _src_sel = st.selectbox(
             "Where did the TDS come from?",
             [_src_placeholder, "Supplier", "Customer", "Competitor"],
-            index=0
+            index=0,
+            key="tds_source_select"
         )
         tds_source = None if _src_sel == _src_placeholder else _src_sel
 
@@ -2246,10 +2248,12 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         st.subheader("Technical Data Sheet (TDS)")
         st.warning("⚠️ TDS upload is required. Products cannot be saved without a TDS file.")
         # Single file picker only (mobile-friendly)
+        # Reset-aware file uploader (tokenized key so it fully clears after save)
+        _tds_file_token = st.session_state.get("tds_file_reset_token", "0")
         uploaded_file = st.file_uploader(
             "Upload TDS (PDF/DOCX/Images) — max 10MB *",
             type=ALLOWED_FILE_EXTS,
-            key="tds_file_picker",
+            key=f"tds_file_picker_{_tds_file_token}",
             accept_multiple_files=False,
             help="Tip: On mobile, choose 'Files' or 'Browse' to pick from device storage."
         )
@@ -2509,15 +2513,21 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                     if not ok_entity:
                         st.warning(f"Saved product, but failed to create sourcing entity: {err_entity}")
                     st.success("✅ Record saved successfully")
-                    # Clear Add TDS session artifacts and redirect back to Add TDS
+                    # Clear Add TDS session artifacts and reset the form for a fresh insert
                     try:
                         for k in [
                             "extracted_tds_data",
                             "extracted_tds_data_norm",
                             "tds_defaults",
                             "tds_hydrate_pending",
+                            # old file uploader key (prior versions)
                             "tds_file_picker",
                             "category_select_prev",
+                            # Explicit keys for Add TDS widgets
+                            "tds_product_code",
+                            "tds_description",
+                            "tds_product_status",
+                            "tds_source_select",
                             # Explicit input widget keys used in Add TDS
                             "tds_generic_name",
                             "tds_trade_name",
@@ -2538,7 +2548,25 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                                 st.session_state.pop(f"type_select_{_key_base}", None)
                         except Exception:
                             pass
-                        # Navigate back to Add tab
+                        # Bump file-uploader token so Streamlit remounts the widget (clears selected file)
+                        try:
+                            st.session_state["tds_file_reset_token"] = str(uuid.uuid4())
+                        except Exception:
+                            pass
+                        # Explicitly reset key widget values back to placeholders/empty
+                        try:
+                            st.session_state["category_select"] = "— Select —"
+                        except Exception:
+                            pass
+                        try:
+                            st.session_state["tds_product_code"] = ""
+                            st.session_state["tds_description"] = ""
+                            st.session_state["tds_product_status"] = "— Select —"
+                            st.session_state["tds_source_select"] = "— Select —"
+                        except Exception:
+                            pass
+
+                        # Stay in Add tab with a fresh/empty form
                         st.session_state["sourcing_section"] = "add"
                     except Exception:
                         pass
