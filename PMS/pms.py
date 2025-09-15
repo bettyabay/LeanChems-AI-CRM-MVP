@@ -4601,7 +4601,181 @@ if st.session_state.get("main_section") == "leanchem":
 if st.session_state.get("main_section") == "market":
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">Market Master Data</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
-    st.info("🚧 Coming soon")
+
+    # Helpers
+    def _fetch_market_rows(*, hs_code: str | None, brand: str | None, chemical_type_id: str | None) -> list[dict]:
+        try:
+            q = supabase.table("market_opportunities").select("*")
+            # Basic server-side filters when possible
+            if chemical_type_id:
+                q = q.eq("chemical_entity_id", chemical_type_id)
+            # We cannot ilike inside jsonb easily; fetch and filter client-side for hs_code/brand
+            res = q.order("period", desc=False).limit(5000).execute()
+            rows = res.data or []
+            out = []
+            hs = (hs_code or "").strip().lower()
+            br = (brand or "").strip().lower()
+            for r in rows:
+                meta = r.get("metadata") or {}
+                raw = r.get("raw_data") or {}
+                hay_json = " ".join([
+                    str(meta.get("hs_code") or ""),
+                    str(meta.get("brand") or ""),
+                    str(meta.get("commercial_name") or ""),
+                    str(raw)
+                ]).lower()
+                if hs and hs not in hay_json:
+                    continue
+                if br and br not in hay_json:
+                    continue
+                out.append(r)
+            return out
+        except Exception as e:
+            st.error(f"Failed to fetch market data: {e}")
+            return []
+
+    def _resolve_type_id_by_cat_type(category: str, type_name: str) -> str | None:
+        try:
+            if not category or not type_name:
+                return None
+            res = supabase.table("chemical_types").select("id").eq("category", category).eq("name", type_name).limit(1).execute()
+            rows = res.data or []
+            return (rows[0] or {}).get("id") if rows else None
+        except Exception:
+            return None
+
+    # UI: Add
+    st.subheader("Market Data — Add")
+    mc1, mc2 = st.columns(2)
+    with mc1:
+        _market_cat_placeholder = "— Select —"
+        try:
+            _market_cats = [_market_cat_placeholder] + get_all_categories()
+        except Exception:
+            _market_cats = [_market_cat_placeholder] + FIXED_CATEGORIES
+        m_cat = st.selectbox("Select Category", _market_cats, key="market_cat_select")
+        sel_cat = "" if m_cat == _market_cat_placeholder else m_cat
+    with mc2:
+        m_types = get_types_for_category(sel_cat) if sel_cat else []
+        _market_type_placeholder = "— Select —"
+        m_type = st.selectbox("Select Product Type", [_market_type_placeholder] + (m_types or []), key="market_type_select")
+        sel_type = "" if m_type == _market_type_placeholder else m_type
+
+    mcol1, mcol2, mcol3 = st.columns([1,1,2])
+    with mcol1:
+        hs_code_in = st.text_input("HS Code", key="market_hs_code", placeholder="e.g., 390430")
+    with mcol2:
+        brand_in = st.text_input("Commercial/Brand Name", key="market_brand", placeholder="e.g., VINNAPAS 5010N")
+    with mcol3:
+        st.caption("Click to fetch from Import RAG Document (via stored market data)")
+        fetch_market = st.button("📥 Fetch Import Data", type="primary", key="market_fetch_btn")
+
+    # Results area
+    if fetch_market:
+        type_id = _resolve_type_id_by_cat_type(sel_cat, sel_type)
+        rows = _fetch_market_rows(hs_code=hs_code_in, brand=brand_in, chemical_type_id=type_id)
+        if not rows:
+            st.info("No matching market records found.")
+        else:
+            # Convert to DataFrame
+            try:
+                import pandas as pd
+                df = pd.DataFrame(rows)
+            except Exception:
+                df = None
+
+            # Normalize fields
+            def _year_from_period(val):
+                try:
+                    s = str(val)
+                    return int(s[:4])
+                except Exception:
+                    return None
+            volumes_by_year = {}
+            org_to_total = {}
+            org_year_brand = {}
+            total_volume = 0.0
+            for r in rows:
+                year = _year_from_period(r.get("period"))
+                vol = 0.0
+                try:
+                    v = r.get("volume_ton")
+                    vol = float(v) if v is not None else 0.0
+                except Exception:
+                    vol = 0.0
+                if year:
+                    volumes_by_year[year] = volumes_by_year.get(year, 0.0) + vol
+                org = (r.get("organization") or "Unknown").strip()
+                org_to_total[org] = org_to_total.get(org, 0.0) + vol
+                total_volume += vol
+                # Brand/commercial name from metadata when available
+                meta = r.get("metadata") or {}
+                brand_val = meta.get("brand") or meta.get("commercial_name") or brand_in or "-"
+                org_year_brand.setdefault(org, {}).setdefault(year, {}).setdefault(str(brand_val), 0.0)
+                org_year_brand[org][year][str(brand_val)] += vol
+
+            # Output 1: Volume of Import by year
+            st.markdown("---")
+            st.subheader("Output 1: Volume of Import by Year")
+            if volumes_by_year:
+                try:
+                    import pandas as pd
+                    yrs = sorted(volumes_by_year.keys())
+                    df_y = pd.DataFrame({"Year": yrs, "Volume (ton)": [volumes_by_year[y] for y in yrs]})
+                    st.dataframe(df_y, use_container_width=True, hide_index=True)
+                except Exception:
+                    for y in sorted(volumes_by_year.keys()):
+                        st.write(f"{y}: {volumes_by_year[y]:,.2f} ton")
+            else:
+                st.caption("No yearly data")
+
+            # Output 2: Pareto 80/20 key customers
+            st.markdown("---")
+            st.subheader("Output 2: Key Customers (80/20)")
+            if total_volume > 0:
+                sorted_orgs = sorted(org_to_total.items(), key=lambda x: x[1], reverse=True)
+                cum = 0.0
+                pareto = []
+                for org, vol in sorted_orgs:
+                    if cum / total_volume < 0.8:
+                        pareto.append((org, vol))
+                        cum += vol
+                try:
+                    import pandas as pd
+                    df_p = pd.DataFrame([(o, v) for o, v in pareto], columns=["Customer", "Total Volume (ton)"])
+                    st.dataframe(df_p, use_container_width=True, hide_index=True)
+                except Exception:
+                    for org, vol in pareto:
+                        st.write(f"- {org}: {vol:,.2f} ton")
+            else:
+                st.caption("No volume found")
+
+            # Output 3: Per-customer volume by year and brand
+            st.markdown("---")
+            st.subheader("Output 3: Per-customer Yearly Volumes (by Brand)")
+            if org_year_brand:
+                for org, ydata in org_year_brand.items():
+                    with st.expander(f"{org}", expanded=False):
+                        try:
+                            import pandas as pd
+                            rows_tab = []
+                            for y in sorted(ydata.keys()):
+                                brand_map = ydata[y]
+                                for bname, vol in brand_map.items():
+                                    rows_tab.append({"Year": y, "Brand": bname, "Volume (ton)": vol})
+                            if rows_tab:
+                                df_org = pd.DataFrame(rows_tab)
+                                st.dataframe(df_org, use_container_width=True, hide_index=True)
+                            else:
+                                st.caption("No data")
+                        except Exception:
+                            for y in sorted(ydata.keys()):
+                                st.write(f"{y}")
+                                for bname, vol in ydata[y].items():
+                                    st.write(f"- {bname}: {vol:,.2f} ton")
+            else:
+                st.caption("No per-customer details")
+
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================
