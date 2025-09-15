@@ -1218,6 +1218,76 @@ def get_category_type_mapping() -> dict:
     except Exception:
         return {}
 
+# Dynamic categories sourced from database (chemical_types.category) plus fixed list
+@st.cache_data(ttl=30)
+def get_all_categories() -> list[str]:
+    try:
+        # Pull distinct categories from chemical_types
+        res = supabase.table("chemical_types").select("category").execute()
+        db_cats = {str((row or {}).get("category") or "").strip() for row in (res.data or [])}
+    except Exception:
+        db_cats = set()
+    # Also include categories from optional categories table if present
+    more_cats: set[str] = set()
+    try:
+        res2 = supabase.table("categories").select("name").execute()
+        more_cats = {str((row or {}).get("name") or "").strip() for row in (res2.data or [])}
+    except Exception:
+        more_cats = set()
+    # If categories table has any rows, treat it as the source of truth
+    if more_cats:
+        return sorted({c for c in more_cats if c})
+    # Include any session-defined extras (fallback when DB insert not available or table empty)
+    try:
+        extra = set([str(c).strip() for c in (st.session_state.get("extra_categories") or []) if str(c).strip()])
+    except Exception:
+        extra = set()
+    # Union with fixed list and remove empties
+    all_cats = {c for c in (FIXED_CATEGORIES + list(db_cats) + list(more_cats) + list(extra)) if str(c).strip()}
+    # Stable, user-friendly order
+    return sorted(all_cats)
+
+def save_category_if_possible(category_name: str) -> bool:
+    """Best-effort save of a new category into an optional categories table.
+    Returns True if saved, False if table missing or save failed.
+    """
+    try:
+        name = (category_name or "").strip()
+        if not name:
+            return False
+        # De-dup check (DB)
+        try:
+            existing = supabase.table("categories").select("id,name").ilike("name", name).limit(1).execute()
+            if existing and existing.data:
+                return True
+        except Exception:
+            # ignore, table may not exist or policy denies select
+            pass
+        # Try to insert into DB
+        try:
+            supabase.table("categories").insert({"name": name}).execute()
+            try:
+                get_all_categories.clear()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            # Fall back to session-scoped list so it still appears immediately
+            try:
+                current = set(st.session_state.get("extra_categories") or [])
+                if name not in current:
+                    current.add(name)
+                    st.session_state["extra_categories"] = sorted([c for c in current if str(c).strip()])
+                try:
+                    get_all_categories.clear()
+                except Exception:
+                    pass
+                return True
+            except Exception:
+                return False
+    except Exception:
+        return False
+
 def validate_product_name(name: str) -> tuple[bool, str]:
     if not name or not name.strip():
         return False, "Product name is required"
@@ -2209,7 +2279,10 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
         st.subheader("Basic Information")
         # Category select (selection only; no add) with placeholder
         _cat_placeholder = "— Select —"
-        _cat_options = [_cat_placeholder] + FIXED_CATEGORIES
+        try:
+            _cat_options = [_cat_placeholder] + get_all_categories()
+        except Exception:
+            _cat_options = [_cat_placeholder] + FIXED_CATEGORIES
         _category_sel = st.selectbox(
             "Chemical Category *",
             _cat_options,
@@ -3766,8 +3839,19 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
         st.markdown("---")
         st.caption("Select Category and Product Type from mapping")
         _chem_cat_placeholder = "— Select —"
-        _chem_cat_options = [_chem_cat_placeholder] + FIXED_CATEGORIES
+        try:
+            _chem_cat_options = [_chem_cat_placeholder] + get_all_categories()
+        except Exception:
+            _chem_cat_options = [_chem_cat_placeholder] + FIXED_CATEGORIES
         st.markdown("**Category**")
+        # Apply any pending selection before the widget is created to avoid Streamlit key mutation errors
+        try:
+            _pending_sel = st.session_state.get("chem_seg_select_pending")
+            if _pending_sel and _pending_sel in _chem_cat_options:
+                st.session_state["chem_seg_select"] = _pending_sel
+                st.session_state.pop("chem_seg_select_pending", None)
+        except Exception:
+            pass
         _chem_cat_sel = st.selectbox(
             "Category",
             options=_chem_cat_options,
@@ -3778,6 +3862,27 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
         add_new_seg = st.checkbox("Add new category", key="chem_add_new_seg")
         if add_new_seg:
             new_seg = st.text_input("New Category Name", key="chem_new_seg")
+            # Save immediately when user presses the save button; keep selection synced
+            col_nc1, col_nc2 = st.columns([1,3])
+            with col_nc1:
+                if st.button("Save Category", key="chem_save_new_category", type="secondary"):
+                    if not (new_seg or "").strip():
+                        st.warning("Enter a category name first")
+                    else:
+                        saved = save_category_if_possible(new_seg)
+                        if saved:
+                            st.success("Category saved")
+                            try:
+                                get_all_categories.clear()
+                            except Exception:
+                                pass
+                            # Defer selection to next run before widget instantiation
+                            st.session_state["chem_seg_select_pending"] = new_seg.strip()
+                            st.rerun()
+                        else:
+                            st.info("Saved locally. It will appear after first record uses it.")
+            with col_nc2:
+                st.caption("Type a new category then click Save Category")
             if new_seg:
                 selected_segment = new_seg.strip()
 
@@ -4322,7 +4427,172 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
 if st.session_state.get("main_section") == "leanchem":
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">LeanChem Product Master Data</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
-    st.info("🚧 Coming soon")
+
+    # Helpers
+    def _fetch_tds_by_cat_type(cat: str, ptype: str) -> list[dict]:
+        try:
+            rows = supabase.table("tds_data").select("id,chemical_type_id,brand,grade,metadata").order("created_at", desc=True).execute().data or []
+            out = []
+            for r in rows:
+                md = r.get("metadata") or {}
+                if cat and (md.get("category") or "") != cat:
+                    continue
+                if ptype and (md.get("product_type") or "") != ptype:
+                    continue
+                out.append(r)
+            return out
+        except Exception:
+            return []
+
+    def _fetch_price_for_incoterm(tds_id: str, incoterm: str) -> dict:
+        try:
+            recs = supabase.table("costing_pricing_data").select("rows,created_at").eq("tds_id", tds_id).order("created_at", desc=True).limit(5).execute().data or []
+            for rec in recs:
+                for row in rec.get("rows") or []:
+                    try:
+                        if (row.get("incoterm") or "").strip().lower() == incoterm.strip().lower():
+                            return {
+                                "price_usd": row.get("price_usd") or "",
+                                "price_etb": row.get("price_etb") or "",
+                            }
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return {"price_usd": "", "price_etb": ""}
+
+    # Tab: List and Add
+    tab_lc1, tab_lc2 = st.columns(2)
+    with tab_lc1:
+        st.subheader("Leanchems product List")
+    with tab_lc2:
+        st.subheader("Add")
+
+    # Add form
+    with st.form("leanchem_add_form", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            lc_cat_placeholder = "— Select —"
+            lc_cat_sel = st.selectbox("Select Category", [lc_cat_placeholder] + FIXED_CATEGORIES, key="lc_category")
+            lc_category = "" if lc_cat_sel == lc_cat_placeholder else lc_cat_sel
+            # Product Type options depend on category using chemical master mapping
+            lc_types = get_types_for_category(lc_category)
+            lc_type_placeholder = "— Select —"
+            lc_type_sel = st.selectbox("Select Product Type", [lc_type_placeholder] + (lc_types or []), key="lc_type")
+            lc_product_type = "" if lc_type_sel == lc_type_placeholder else lc_type_sel
+        with col2:
+            # TDS filtered by selected cat/type
+            tds_items = _fetch_tds_by_cat_type(lc_category, lc_product_type) if lc_category and lc_product_type else []
+            tds_label_map = {}
+            for r in tds_items:
+                md = r.get("metadata") or {}
+                label = md.get("product_name") or md.get("generic_product_name") or (r.get("brand") or "Unnamed")
+                tds_label_map[f"{label}"] = r.get("id")
+            tds_placeholder = "— Select —"
+            lc_tds_label = st.selectbox("Select TDS", [tds_placeholder] + list(tds_label_map.keys()), key="lc_tds")
+            lc_tds_id = tds_label_map.get(lc_tds_label) if lc_tds_label != tds_placeholder else None
+
+        st.markdown("---")
+        st.subheader("Sample & Stock")
+        # Sample - Addis
+        s1_col1, s1_col2, s1_col3 = st.columns([1,1,1])
+        with s1_col1:
+            lc_sample_addis_yes = st.selectbox("Sample - Addis Ababa", ["No", "Yes"], key="lc_sample_addis")
+        with s1_col2:
+            lc_sample_addis_unit = st.text_input("Unit of measurement", key="lc_sample_addis_unit")
+        with s1_col3:
+            lc_sample_addis_qty = st.text_input("Qty", key="lc_sample_addis_qty")
+
+        # Stock - Addis
+        s2_col1, s2_col2, s2_col3 = st.columns([1,1,1])
+        with s2_col1:
+            lc_stock_addis_yes = st.selectbox("Stock - Addis Ababa", ["No", "Yes"], key="lc_stock_addis")
+        with s2_col2:
+            lc_stock_addis_unit = st.text_input("Unit of measurement", key="lc_stock_addis_unit")
+        with s2_col3:
+            lc_stock_addis_qty = st.text_input("Qty", key="lc_stock_addis_qty")
+
+        # Stock - Nairobi
+        s3_col1, s3_col2, s3_col3 = st.columns([1,1,1])
+        with s3_col1:
+            lc_stock_nairobi_yes = st.selectbox("Stock - Nairobi", ["No", "Yes"], key="lc_stock_nairobi")
+        with s3_col2:
+            lc_stock_nairobi_unit = st.text_input("Unit of measurement", key="lc_stock_nairobi_unit")
+        with s3_col3:
+            lc_stock_nairobi_qty = st.text_input("Qty", key="lc_stock_nairobi_qty")
+
+        st.markdown("---")
+        # Fetch data from master data
+        colf1, colf2 = st.columns([1,1])
+        with colf1:
+            fetch_clicked = st.form_submit_button("Fetch data from master data", type="secondary")
+        with colf2:
+            save_clicked = st.form_submit_button("Save", type="primary")
+
+    # Handle fetch
+    if st.session_state.get("lc_tds") and fetch_clicked:
+        pass  # no-op to satisfy mypy
+    if fetch_clicked:
+        if not lc_tds_id:
+            st.warning("Select TDS first.")
+        else:
+            # Selling Price pull from pricing master
+            price_addis = _fetch_price_for_incoterm(lc_tds_id, "Addis Ababa")
+            price_nairobi = _fetch_price_for_incoterm(lc_tds_id, "Nairobi")
+            st.success("Fetched pricing from master data")
+            st.write(f"Selling Price — Addis Ababa: USD {price_addis.get('price_usd') or '-'} | ETB {price_addis.get('price_etb') or '-'}")
+            st.write(f"Selling Price — Nairobi: USD {price_nairobi.get('price_usd') or '-'} | ETB {price_nairobi.get('price_etb') or '-'}")
+            try:
+                st.session_state["lc_price_addis"] = price_addis
+                st.session_state["lc_price_nairobi"] = price_nairobi
+            except Exception:
+                pass
+            # TDS link
+            try:
+                rec = supabase.table("tds_data").select("metadata").eq("id", lc_tds_id).limit(1).execute()
+                md = ((rec.data or [{}])[0] or {}).get("metadata") or {}
+                if md.get("tds_file_url"):
+                    st.markdown(f"[📄 TDS]({md.get('tds_file_url')})")
+            except Exception:
+                pass
+
+    # Save
+    if save_clicked:
+        # Basic validation
+        if not (lc_category and lc_product_type and lc_tds_id):
+            st.error("Category, Product Type and TDS are required")
+        else:
+            try:
+                payload = {
+                    "id": str(uuid.uuid4()),
+                    "category": lc_category,
+                    "product_type": lc_product_type,
+                    "tds_id": lc_tds_id,
+                    "sample_addis": {
+                        "yes": lc_sample_addis_yes,
+                        "unit": lc_sample_addis_unit,
+                        "qty": lc_sample_addis_qty,
+                    },
+                    "stock_addis": {
+                        "yes": lc_stock_addis_yes,
+                        "unit": lc_stock_addis_unit,
+                        "qty": lc_stock_addis_qty,
+                    },
+                    "stock_nairobi": {
+                        "yes": lc_stock_nairobi_yes,
+                        "unit": lc_stock_nairobi_unit,
+                        "qty": lc_stock_nairobi_qty,
+                    },
+                    "prices": {
+                        "addis_ababa": st.session_state.get("lc_price_addis") or {},
+                        "nairobi": st.session_state.get("lc_price_nairobi") or {},
+                    },
+                }
+                supabase.table("leanchem_products").insert(payload).execute()
+                st.success("✅ LeanChem product saved")
+            except Exception as e:
+                st.error(f"Failed to save LeanChem product: {e}")
+
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================
