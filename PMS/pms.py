@@ -1151,6 +1151,36 @@ def _build_chem_view_rows(records: list[dict], fields: list[tuple[str, str]]) ->
         rows.append(row)
     return rows
 
+# Global helper: render list/dict values as user-friendly multi-line text
+def _ai_list_as_lines(value):
+    try:
+        import json as _json_for_ai_view
+        if isinstance(value, list):
+            rendered_lines = []
+            for item in value:
+                if isinstance(item, dict):
+                    parts = []
+                    for k, v in item.items():
+                        if v is None:
+                            continue
+                        parts.append(f"{k}: {v}")
+                    rendered_lines.append(
+                        ", ".join(parts) if parts else _json_for_ai_view.dumps(item, ensure_ascii=False)
+                    )
+                else:
+                    rendered_lines.append(str(item))
+            return "\n".join(rendered_lines)
+        if value is None:
+            return ""
+        if isinstance(value, dict):
+            return _json_for_ai_view.dumps(value, ensure_ascii=False)
+        return str(value)
+    except Exception:
+        try:
+            return str(value)
+        except Exception:
+            return ""
+
 @st.cache_data
 def get_category_type_mapping() -> dict:
     """Return {category: [types...]} from the Excel. Fallback to empty mapping on error."""
