@@ -824,6 +824,8 @@ with col_user:
         or (_email_lc in db_manager_emails)
         or (_email_lc == "daniel@leanchems.com")
         or (_email_lc == "alhadi@leanchems.com")
+        or (_email_lc == "meraf@leanchems.com")
+        or (_email_lc == "iman@leanchems.com")
     )
     _role_text = "Manager" if _is_mgr_display else "Viewer"
     
@@ -858,7 +860,9 @@ user_email = ((sb_user or {}).get("email") or "").strip().lower()
 CHEMICAL_MASTER_ACCESS = {
     "daniel@leanchems.com",
     "bettyabay@leanchems.com", 
-    "alhadi@leanchems.com"
+    "alhadi@leanchems.com",
+    "meraf@leanchems.com",
+    "iman@leanchems.com"
 }
 
 SOURCING_MASTER_ACCESS = {
@@ -895,8 +899,8 @@ def get_user_access_levels(user_email: str) -> dict:
     
     user_email_lower = user_email.strip().lower()
     
-    # bettyabay@leanchems.com, daniel@leanchems.com and alhadi@leanchems.com have access to all functions
-    if user_email_lower in {"bettyabay@leanchems.com", "daniel@leanchems.com", "alhadi@leanchems.com"}:
+    # bettyabay@leanchems.com, daniel@leanchems.com, alhadi@leanchems.com and meraf@leanchems.com have access to all functions
+    if user_email_lower in {"bettyabay@leanchems.com", "daniel@leanchems.com", "alhadi@leanchems.com", "meraf@leanchems.com", "iman@leanchems.com"}:
         return {
             "chemical": True,
             "sourcing": True,
@@ -937,7 +941,7 @@ db_manager_emails = get_manager_emails_from_db()
 is_manager = False
 if user_role in {"manager", "admin"}:
     is_manager = True
-elif user_email and (user_email in (MANAGER_EMAILS or set()) or user_email in {"daniel@leanchems.com", "alhadi@leanchems.com"}):
+elif user_email and (user_email in (MANAGER_EMAILS or set()) or user_email in {"daniel@leanchems.com", "alhadi@leanchems.com", "meraf@leanchems.com", "iman@leanchems.com"}):
     is_manager = True
 elif MANAGER_DOMAIN and user_email.endswith(f"@{MANAGER_DOMAIN}"):
     is_manager = True
@@ -1826,34 +1830,113 @@ def create_tds_sourcing_entity(*, chemical_type_id: str | None, brand: str | Non
         return False, str(e)
 
 def extract_text_from_file(uploaded_file):
-    """Extract text from uploaded file (PDF, DOCX, or image)"""
+    """Extract text from uploaded file (PDF, DOCX, or image) with OCR fallbacks.
+
+    PDFs: PyPDF2 → pdfplumber → OCR (pdf2image + pytesseract)
+    Images: OCR (pytesseract)
+    Optional env vars: TESSERACT_CMD, POPPLER_PATH
+    """
     try:
         file_extension = uploaded_file.name.split('.')[-1].lower()
-        
+
+        def _normalize_text(txt: str) -> str:
+            try:
+                return (txt or "").replace("\r", "\n").replace("\u0000", "").strip()
+            except Exception:
+                return txt or ""
+
         if file_extension == 'pdf':
-            # Extract text from PDF
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.getvalue()))
+            raw = uploaded_file.getvalue()
             text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text() + "\n"
-            return text
-            
+            # 1) PyPDF2
+            try:
+                pdf_reader = PyPDF2.PdfReader(io.BytesIO(raw))
+                for page in pdf_reader.pages:
+                    try:
+                        page_text = page.extract_text() or ""
+                    except Exception:
+                        page_text = ""
+                    if page_text:
+                        text += page_text + "\n"
+            except Exception:
+                pass
+
+            def _is_insufficient(t: str) -> bool:
+                return len((t or "").strip()) < 150
+
+            # 2) pdfplumber fallback for text-based but complex PDFs
+            if _is_insufficient(text):
+                try:
+                    import pdfplumber  # type: ignore
+                    with pdfplumber.open(io.BytesIO(raw)) as pdf:
+                        txt_parts = []
+                        for p in pdf.pages:
+                            try:
+                                txt_parts.append(p.extract_text() or "")
+                            except Exception:
+                                txt_parts.append("")
+                        text = "\n".join(txt_parts)
+                except Exception:
+                    pass
+
+            # 3) OCR fallback for scanned/image PDFs
+            if _is_insufficient(text):
+                try:
+                    from pdf2image import convert_from_bytes  # type: ignore
+                    import pytesseract  # type: ignore
+                    import os as _os
+                    tess_cmd = _os.getenv("TESSERACT_CMD")
+                    if tess_cmd:
+                        try:
+                            pytesseract.pytesseract.tesseract_cmd = tess_cmd
+                        except Exception:
+                            pass
+                    poppler_path = _os.getenv("POPPLER_PATH")
+                    # Convert first up to 10 pages to images for OCR
+                    if poppler_path:
+                        images = convert_from_bytes(raw, dpi=200, poppler_path=poppler_path)
+                    else:
+                        images = convert_from_bytes(raw, dpi=200)
+                    ocr_text_parts = []
+                    for img in images[:10]:
+                        try:
+                            ocr_text_parts.append(pytesseract.image_to_string(img) or "")
+                        except Exception:
+                            ocr_text_parts.append("")
+                    text = "\n".join(ocr_text_parts)
+                except Exception:
+                    pass
+
+            return _normalize_text(text)
+
         elif file_extension in ['docx', 'doc']:
             # Extract text from DOCX
             doc = Document(io.BytesIO(uploaded_file.getvalue()))
             text = ""
             for paragraph in doc.paragraphs:
                 text += paragraph.text + "\n"
-            return text
-            
+            return _normalize_text(text)
+
         elif file_extension in ['png', 'jpg', 'jpeg', 'heic', 'heif', 'webp']:
-            # For images, we'll need to use OCR or send to Gemini Vision
-            # For now, return a placeholder - you can implement OCR here
-            return "Image file detected. OCR processing needed."
-            
+            # OCR for images
+            try:
+                import PIL.Image as _PIL_Image  # type: ignore
+                import pytesseract  # type: ignore
+                import os as _os
+                tess_cmd = _os.getenv("TESSERACT_CMD")
+                if tess_cmd:
+                    try:
+                        pytesseract.pytesseract.tesseract_cmd = tess_cmd
+                    except Exception:
+                        pass
+                img = _PIL_Image.open(io.BytesIO(uploaded_file.getvalue()))
+                return _normalize_text(pytesseract.image_to_string(img) or "")
+            except Exception:
+                return ""
+
         else:
             return "Unsupported file format"
-            
+
     except Exception as e:
         return f"Error extracting text: {str(e)}"
 
