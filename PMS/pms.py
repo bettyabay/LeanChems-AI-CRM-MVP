@@ -4687,6 +4687,17 @@ if st.session_state.get("main_section") == "chemical" and has_chemical_master_ac
 if st.session_state.get("main_section") == "leanchem":
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">LeanChem Product Master Data</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
+    # Show post-save success message after rerun
+    if st.session_state.get("lc_saved_ok"):
+        st.success("✅ LeanChem product saved")
+        st.session_state.pop("lc_saved_ok", None)
+    # Apply deferred reset of widget states safely before rendering widgets
+    if st.session_state.get("lc_reset"):
+        try:
+            _clear_leanchem_session()
+        except Exception:
+            pass
+        st.session_state.pop("lc_reset", None)
 
     # Helpers
     def _fetch_tds_by_cat_type(cat: str, ptype: str) -> list[dict]:
@@ -5073,12 +5084,9 @@ if st.session_state.get("main_section") == "leanchem":
                 if ok:
                     if msg == "saved_fallback":
                         st.warning("Saved under the selected TDS record (metadata) because the 'leanchem_products' table is missing or insert was blocked by RLS. See setup instructions below.")
-                    st.success("✅ LeanChem product saved")
-                    # Reset LeanChem inputs and dropdowns to defaults
-                    try:
-                        _clear_leanchem_session()
-                    except Exception:
-                        pass
+                    # Mark for reset on next run to avoid modifying after widget instantiation
+                    st.session_state["lc_saved_ok"] = True
+                    st.session_state["lc_reset"] = True
                     st.rerun()
                 else:
                     st.error(f"Failed to save LeanChem product: {msg}")
@@ -5121,6 +5129,12 @@ if st.session_state.get("main_section") == "leanchem":
                             ok, msg = _lean_update_record(rid, r.get("source"), updates)
                             if ok:
                                 st.success("Updated")
+                                # Clear LeanChem session state after save and return to Manage tab
+                                try:
+                                    _clear_leanchem_session()
+                                except Exception:
+                                    pass
+                                st.session_state["leanchem_current_tab"] = "Manage"
                                 st.rerun()
                             else:
                                 st.error(f"Failed to update: {msg}")
