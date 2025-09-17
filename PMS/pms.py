@@ -1185,6 +1185,38 @@ def _ai_list_as_lines(value):
         except Exception:
             return ""
 
+# Global parser for human-friendly "key: value, key: value" lines
+def _parse_kv_lines(text_val: str) -> list[dict]:
+    """Parse newline-delimited entries where each line contains comma-separated
+    key: value pairs into a list of dicts. Robust to extra spaces and empty lines.
+
+    Example input (two lines -> two dicts):
+        "application: Mortar, range: 0.2-0.4%\napplication: Adhesives, range: 1-2%"
+    """
+    items: list[dict] = []
+    try:
+        txt = (text_val or "").strip()
+        if not txt:
+            return []
+        for line in txt.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            entry: dict = {}
+            # Split by commas, then split first ':' per pair
+            for pair in [p for p in line.split(",") if p.strip()]:
+                if ":" in pair:
+                    k, v = pair.split(":", 1)
+                    k = (k or "").strip()
+                    v = (v or "").strip()
+                    if k:
+                        entry[k] = v
+            if entry:
+                items.append(entry)
+        return items
+    except Exception:
+        return items
+
 @st.cache_data
 def get_category_type_mapping() -> dict:
     """Return {category: [types...]} from the Excel. Fallback to empty mapping on error."""
@@ -1386,6 +1418,30 @@ def get_types_for_category(category: str) -> list[str]:
     except Exception:
         return []
 
+def get_types_for_category_enriched(category: str) -> list[str]:
+    """Return product types for a category by combining:
+    - Distinct `chemical_types.name` where `category` matches (authoritative)
+    - Distinct `metadata.product_type` from `tds_data` where `metadata.category` matches (fallback)
+    """
+    if not category:
+        return []
+    try:
+        base = set(get_types_for_category(category) or [])
+    except Exception:
+        base = set()
+    # Enrich from TDS metadata
+    try:
+        rows = supabase.table("tds_data").select("metadata").execute().data or []
+        for r in rows:
+            md = r.get("metadata") or {}
+            if (md.get("category") or "").strip() == category:
+                pt = (md.get("product_type") or "").strip()
+                if pt:
+                    base.add(pt)
+    except Exception:
+        pass
+    return sorted([t for t in base if t])
+
 def upload_tds_to_supabase(uploaded_file, product_id: str):
     if not uploaded_file:
         return None, None, None, None
@@ -1553,6 +1609,8 @@ def _has_unsaved_changes(module: str) -> bool:
             return _has_unsaved_partner_changes()
         elif module == "pricing":
             return _has_unsaved_pricing_changes()
+        elif module == "leanchem":
+            return _has_unsaved_leanchem_changes()
         return False
     except Exception:
         return False
@@ -1568,6 +1626,8 @@ def _clear_module_session(module: str):
             _clear_partner_session()
         elif module == "pricing":
             _clear_pricing_session()
+        elif module == "leanchem":
+            _clear_leanchem_session()
     except Exception:
         pass
 
@@ -1760,6 +1820,43 @@ def _clear_pricing_session():
         pass
 
 
+def _has_unsaved_leanchem_changes() -> bool:
+    """Check unsaved changes in LeanChem Add UI."""
+    try:
+        if st.session_state.get("main_section") != "leanchem":
+            return False
+        keys = [
+            "lc_category","lc_type","lc_tds",
+            "lc_sample_addis","lc_sample_addis_unit","lc_sample_addis_qty",
+            "lc_stock_addis","lc_stock_addis_unit","lc_stock_addis_qty",
+            "lc_stock_nairobi","lc_stock_nairobi_unit","lc_stock_nairobi_qty",
+        ]
+        for k in keys:
+            if k in st.session_state:
+                v = st.session_state.get(k)
+                if isinstance(v, str):
+                    if v and v != "— Select —":
+                        return True
+                elif v not in (None, ""):
+                    return True
+        return False
+    except Exception:
+        return False
+
+def _clear_leanchem_session():
+    """Clear LeanChem Add UI state to defaults."""
+    try:
+        for k in [
+            "lc_category","lc_type","lc_tds",
+            "lc_sample_addis","lc_sample_addis_unit","lc_sample_addis_qty",
+            "lc_stock_addis","lc_stock_addis_unit","lc_stock_addis_qty",
+            "lc_stock_nairobi","lc_stock_nairobi_unit","lc_stock_nairobi_qty",
+            "lc_price_addis","lc_price_nairobi",
+        ]:
+            st.session_state.pop(k, None)
+    except Exception:
+        pass
+
 def _is_in_manage_tab(module: str) -> bool:
     """Check if user is currently in a manage tab"""
     try:
@@ -1879,6 +1976,20 @@ def extract_text_from_file(uploaded_file):
                 except Exception:
                     pass
 
+            # 2b) pdfminer.six fallback if still insufficient
+            if _is_insufficient(text):
+                try:
+                    # Optional dependency: pdfminer.six
+                    from pdfminer.high_level import extract_text as _pdfminer_extract  # type: ignore
+                    try:
+                        miner_text = _pdfminer_extract(io.BytesIO(raw)) or ""
+                    except Exception:
+                        miner_text = ""
+                    if miner_text and len(miner_text.strip()) > len(text.strip()):
+                        text = miner_text
+                except Exception:
+                    pass
+
             # 3) OCR fallback for scanned/image PDFs
             if _is_insufficient(text):
                 try:
@@ -1921,6 +2032,15 @@ def extract_text_from_file(uploaded_file):
             # OCR for images
             try:
                 import PIL.Image as _PIL_Image  # type: ignore
+                # Optional HEIC/HEIF support
+                try:
+                    import pillow_heif  # type: ignore
+                    try:
+                        pillow_heif.register_heif_opener()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
                 import pytesseract  # type: ignore
                 import os as _os
                 tess_cmd = _os.getenv("TESSERACT_CMD")
@@ -2043,6 +2163,40 @@ def extract_tds_info_with_ai(text_content):
         st.info("💡 This could be due to content filtering, network issues, or API limits. You can still manually fill in the fields below.")
         return None
 
+def extract_tds_info_with_groq(text_content):
+    """Fallback: Use Groq to extract TDS information when Gemini is unavailable or blocked."""
+    try:
+        if groq_client is None:
+            return None
+        prompt = (
+            "Extract neutral catalog metadata from this Technical Data Sheet (TDS) text and return a JSON object with keys: "
+            "['Generic Product Name','Trade Name','Supplier Name','Packaging Size & Type','Net Weight','HS Code','Technical Specification']. "
+            "Use empty strings when unknown. Text follows:\n\n" + (text_content or "")
+        )
+        chat = groq_client.chat.completions.create(
+            model="llama-3.1-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that outputs valid JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.1,
+            response_format={"type": "json_object"},
+            max_tokens=900,
+        )
+        raw = (chat.choices[0].message.content or "").strip()
+        data = _parse_lenient_json(raw)
+        if isinstance(data, dict):
+            return data
+        # Fallback: make a minimal dict from key: value lines
+        out = {}
+        for line in (raw or "").splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                out[k.strip()] = v.strip()
+        return out or None
+    except Exception:
+        return None
+
 def process_tds_with_ai(uploaded_file):
     """Process TDS file with AI to extract information"""
     if not uploaded_file:
@@ -2053,13 +2207,35 @@ def process_tds_with_ai(uploaded_file):
         # Extract text from file
         text_content = extract_text_from_file(uploaded_file)
         
-        if text_content and text_content != "Unsupported file format" and not text_content.startswith("Error"):
-            # Use AI to extract information
-            extracted_info = extract_tds_info_with_ai(text_content)
-            return extracted_info
-        else:
+        if not text_content or text_content == "Unsupported file format" or str(text_content).startswith("Error"):
             st.error(f"Could not extract text from file: {text_content}")
             return None
+
+        # Prefer Gemini; fallback to Groq; final fallback to key: value parse
+        extracted_info = extract_tds_info_with_ai(text_content)
+        if not extracted_info:
+            extracted_info = extract_tds_info_with_groq(text_content)
+        if not extracted_info:
+            # Last resort: try to parse simple key: value lines from the source text
+            guess = {}
+            for line in (text_content or "").splitlines():
+                if ":" in line and len(line) < 200:
+                    k, v = line.split(":", 1)
+                    if k and v:
+                        guess[k.strip()] = v.strip()
+            if guess:
+                st.warning("AI extraction fell back to heuristic parsing.")
+                extracted_info = guess
+
+        if not extracted_info:
+            st.error("❌ AI extraction failed. Please check your file.")
+            # Keep a short preview for troubleshooting
+            try:
+                st.session_state["tds_last_text_preview"] = (text_content or "")[:3000]
+            except Exception:
+                pass
+            return None
+        return extracted_info
 
 # Enhanced Navigation Section
 st.markdown('<div style="margin: 2rem 0;">', unsafe_allow_html=True)
@@ -2187,7 +2363,8 @@ if st.session_state.get("show_navigation_confirm", False):
         "chemical": "Chemical Master Data",
         "sourcing": "TDS Master Data", 
         "partner_master": "Partner Master Data",
-        "pricing": "Pricing & Costing Master Data"
+        "pricing": "Pricing & Costing Master Data",
+        "leanchem": "LeanChem Product Master Data",
     }
     module_name = module_names.get(current_module, "Current Module")
     is_manage_tab = _is_in_manage_tab(current_module)
@@ -2450,7 +2627,7 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             with col_ai_process1:
                 if st.button("🤖 Extract with AI", type="secondary"):
                     extracted_data = process_tds_with_ai(uploaded_file)
-                    if extracted_data:
+                    if extracted_data is not None:
                         # Normalize keys robustly (case/space/punctuation variations)
                         import re as _re_norm_keys
                         def _normalize_key(s: str) -> str:
@@ -4544,28 +4721,242 @@ if st.session_state.get("main_section") == "leanchem":
             pass
         return {"price_usd": "", "price_etb": ""}
 
-    # Tab: List and Add
-    tab_lc1, tab_lc2 = st.columns(2)
-    with tab_lc1:
-        st.subheader("Leanchems product List")
-    with tab_lc2:
-        st.subheader("Add")
+    def _save_leanchem_product(payload: dict) -> tuple[bool, str]:
+        """Save LeanChem product to primary table if available; otherwise
+        fallback to embedding under the referenced TDS record's metadata.
 
-    # Add form
-    with st.form("leanchem_add_form", clear_on_submit=False):
+        Returns (ok, message).
+        """
+        try:
+            # Try primary table first
+            try:
+                supabase.table("leanchem_products").insert(payload).execute()
+                return True, "saved"
+            except Exception as e:
+                # Probe whether table exists by attempting a trivial select
+                try:
+                    supabase.table("leanchem_products").select("id").limit(1).execute()
+                except Exception:
+                    # Table likely missing → fallback store under TDS metadata
+                    pass
+                # Fallback path: attach under tds_data.metadata.leanchem_product
+                tds_id = payload.get("tds_id")
+                if not tds_id:
+                    return False, "Missing TDS reference for fallback save"
+                rec = supabase.table("tds_data").select("metadata").eq("id", tds_id).limit(1).execute()
+                if not rec.data:
+                    return False, "Referenced TDS not found"
+                md = ((rec.data or [{}])[0] or {}).get("metadata") or {}
+                # Store a minimized snapshot (JSON-serializable)
+                md["leanchem_product"] = {
+                    "category": payload.get("category"),
+                    "product_type": payload.get("product_type"),
+                    "sample_addis": payload.get("sample_addis"),
+                    "stock_addis": payload.get("stock_addis"),
+                    "stock_nairobi": payload.get("stock_nairobi"),
+                    "prices": payload.get("prices"),
+                    "saved_at": datetime.utcnow().isoformat() + "Z",
+                }
+                supabase.table("tds_data").update({"metadata": md}).eq("id", tds_id).execute()
+                return True, "saved_fallback"
+        except Exception as e:
+            return False, str(e)
+
+    def _lean_fetch_all() -> list[dict]:
+        """Fetch LeanChem products from primary table when present; otherwise
+        assemble from TDS metadata fallback. Returns list of dicts with keys:
+        id, source ('table'|'tds'), tds_id, category, product_type, sample_addis,
+        stock_addis, stock_nairobi, prices, tds_name.
+        """
+        out: list[dict] = []
+        # Try table first
+        try:
+            rows = supabase.table("leanchem_products").select("*").order("created_at", desc=True).execute().data or []
+            for r in rows:
+                tds_id = r.get("tds_id")
+                tds_name = None
+                try:
+                    if tds_id:
+                        md = ((supabase.table("tds_data").select("metadata").eq("id", tds_id).limit(1).execute().data or [{}])[0] or {}).get("metadata") or {}
+                        tds_name = md.get("product_name") or md.get("generic_product_name") or md.get("tds_file_name")
+                except Exception:
+                    tds_name = None
+                out.append({
+                    "id": r.get("id"),
+                    "source": "table",
+                    "tds_id": tds_id,
+                    "category": r.get("category"),
+                    "product_type": r.get("product_type"),
+                    "sample_addis": r.get("sample_addis") or {},
+                    "stock_addis": r.get("stock_addis") or {},
+                    "stock_nairobi": r.get("stock_nairobi") or {},
+                    "prices": r.get("prices") or {},
+                    "tds_name": tds_name,
+                })
+        except Exception:
+            pass
+        if out:
+            return out
+        # Fallback: derive from TDS metadata
+        try:
+            rows = supabase.table("tds_data").select("id,metadata").order("created_at", desc=True).execute().data or []
+            for r in rows:
+                md = r.get("metadata") or {}
+                lcp = md.get("leanchem_product")
+                if not lcp:
+                    continue
+                out.append({
+                    "id": f"tds:{r.get('id')}",
+                    "source": "tds",
+                    "tds_id": r.get("id"),
+                    "category": lcp.get("category"),
+                    "product_type": lcp.get("product_type"),
+                    "sample_addis": lcp.get("sample_addis") or {},
+                    "stock_addis": lcp.get("stock_addis") or {},
+                    "stock_nairobi": lcp.get("stock_nairobi") or {},
+                    "prices": lcp.get("prices") or {},
+                    "tds_name": md.get("product_name") or md.get("generic_product_name") or md.get("tds_file_name"),
+                })
+        except Exception:
+            pass
+        return out
+
+    def _lean_update_record(record_id: str, source: str, updates: dict) -> tuple[bool, str]:
+        try:
+            if source == "table":
+                supabase.table("leanchem_products").update(updates).eq("id", record_id).execute()
+                return True, "updated"
+            # tds metadata fallback
+            if not record_id.startswith("tds:"):
+                return False, "invalid tds record id"
+            tds_id = record_id.split(":", 1)[1]
+            rec = supabase.table("tds_data").select("metadata").eq("id", tds_id).limit(1).execute()
+            if not rec.data:
+                return False, "tds not found"
+            md = ((rec.data or [{}])[0] or {}).get("metadata") or {}
+            curr = md.get("leanchem_product") or {}
+            curr.update(updates)
+            md["leanchem_product"] = curr
+            supabase.table("tds_data").update({"metadata": md}).eq("id", tds_id).execute()
+            return True, "updated"
+        except Exception as e:
+            return False, str(e)
+
+    def _lean_delete_record(record_id: str, source: str) -> tuple[bool, str]:
+        try:
+            if source == "table":
+                supabase.table("leanchem_products").delete().eq("id", record_id).execute()
+                return True, "deleted"
+            if not record_id.startswith("tds:"):
+                return False, "invalid tds record id"
+            tds_id = record_id.split(":", 1)[1]
+            rec = supabase.table("tds_data").select("metadata").eq("id", tds_id).limit(1).execute()
+            if not rec.data:
+                return False, "tds not found"
+            md = ((rec.data or [{}])[0] or {}).get("metadata") or {}
+            if "leanchem_product" in md:
+                del md["leanchem_product"]
+            supabase.table("tds_data").update({"metadata": md}).eq("id", tds_id).execute()
+            return True, "deleted"
+        except Exception as e:
+            return False, str(e)
+
+    # -------- LeanChem session helpers --------
+    def _has_unsaved_leanchem_changes() -> bool:
+        try:
+            if st.session_state.get("main_section") != "leanchem":
+                return False
+            # Any of these keys indicate in-progress edits
+            keys = [
+                "lc_category","lc_type","lc_tds",
+                "lc_sample_addis","lc_sample_addis_unit","lc_sample_addis_qty",
+                "lc_stock_addis","lc_stock_addis_unit","lc_stock_addis_qty",
+                "lc_stock_nairobi","lc_stock_nairobi_unit","lc_stock_nairobi_qty",
+            ]
+            return any(k in st.session_state and st.session_state.get(k) not in (None, "", "— Select —") for k in keys)
+        except Exception:
+            return False
+
+    def _clear_leanchem_session():
+        try:
+            for k in [
+                "lc_category","lc_type","lc_tds",
+                "lc_sample_addis","lc_sample_addis_unit","lc_sample_addis_qty",
+                "lc_stock_addis","lc_stock_addis_unit","lc_stock_addis_qty",
+                "lc_stock_nairobi","lc_stock_nairobi_unit","lc_stock_nairobi_qty",
+                "lc_price_addis","lc_price_nairobi",
+            ]:
+                st.session_state.pop(k, None)
+        except Exception:
+            pass
+
+    # Sub-tabs
+    if "leanchem_current_tab" not in st.session_state:
+        st.session_state["leanchem_current_tab"] = "Add"
+    col_tab1, col_tab2, col_tab3 = st.columns(3)
+    with col_tab1:
+        if st.button("Add", key="lc_tab_add", type="primary" if st.session_state.get("leanchem_current_tab") == "Add" else "secondary", use_container_width=True):
+            prev = st.session_state.get("leanchem_current_tab")
+            if prev != "Add" and _has_unsaved_leanchem_changes():
+                st.session_state["pending_leanchem_tab"] = "Add"
+                st.rerun()
+            else:
+                st.session_state["leanchem_current_tab"] = "Add"
+                st.rerun()
+    with col_tab2:
+        if st.button("Manage", key="lc_tab_manage", type="primary" if st.session_state.get("leanchem_current_tab") == "Manage" else "secondary", use_container_width=True):
+            prev = st.session_state.get("leanchem_current_tab")
+            if prev != "Manage" and _has_unsaved_leanchem_changes():
+                st.session_state["pending_leanchem_tab"] = "Manage"
+                st.rerun()
+            else:
+                st.session_state["leanchem_current_tab"] = "Manage"
+                st.rerun()
+    with col_tab3:
+        if st.button("View", key="lc_tab_view", type="primary" if st.session_state.get("leanchem_current_tab") == "View" else "secondary", use_container_width=True):
+            prev = st.session_state.get("leanchem_current_tab")
+            if prev != "View" and _has_unsaved_leanchem_changes():
+                st.session_state["pending_leanchem_tab"] = "View"
+                st.rerun()
+            else:
+                st.session_state["leanchem_current_tab"] = "View"
+                st.rerun()
+
+    # Pending tab change dialog
+    if st.session_state.get("pending_leanchem_tab"):
+        new_tab = st.session_state.get("pending_leanchem_tab")
+        st.warning("⚠️ You have unsaved changes in LeanChem Add.")
+        c1, c2, c3 = st.columns([1,1,2])
+        with c1:
+            if st.button("🗑️ Discard & Continue", key="lc_discard", type="primary"):
+                _clear_leanchem_session()
+                st.session_state["leanchem_current_tab"] = new_tab
+                st.session_state.pop("pending_leanchem_tab")
+                st.rerun()
+        with c2:
+            if st.button("❌ Cancel", key="lc_cancel"):
+                st.session_state.pop("pending_leanchem_tab")
+                st.rerun()
+        with c3:
+            st.caption("Your unsaved changes will be lost if you continue.")
+        st.stop()
+
+    current_lc_tab = st.session_state.get("leanchem_current_tab", "Add")
+
+    # Dynamic selectors (outside form for immediate rerun on change) - only for Add tab
+    if current_lc_tab == "Add":
         col1, col2 = st.columns(2)
         with col1:
             lc_cat_placeholder = "— Select —"
             lc_cat_sel = st.selectbox("Select Category", [lc_cat_placeholder] + FIXED_CATEGORIES, key="lc_category")
             lc_category = "" if lc_cat_sel == lc_cat_placeholder else lc_cat_sel
             # Product Type options depend on category using chemical master mapping
-            lc_types = get_types_for_category(lc_category)
+            lc_types = get_types_for_category_enriched(lc_category)
             lc_type_placeholder = "— Select —"
             lc_type_sel = st.selectbox("Select Product Type", [lc_type_placeholder] + (lc_types or []), key="lc_type")
             lc_product_type = "" if lc_type_sel == lc_type_placeholder else lc_type_sel
-        with col2:
-            # TDS filtered by selected cat/type
-            tds_items = _fetch_tds_by_cat_type(lc_category, lc_product_type) if lc_category and lc_product_type else []
+            # TDS filtered by selected category immediately; further narrowed by product type if chosen
+            tds_items = _fetch_tds_by_cat_type(lc_category, lc_product_type) if lc_category else []
             tds_label_map = {}
             for r in tds_items:
                 md = r.get("metadata") or {}
@@ -4574,48 +4965,55 @@ if st.session_state.get("main_section") == "leanchem":
             tds_placeholder = "— Select —"
             lc_tds_label = st.selectbox("Select TDS", [tds_placeholder] + list(tds_label_map.keys()), key="lc_tds")
             lc_tds_id = tds_label_map.get(lc_tds_label) if lc_tds_label != tds_placeholder else None
+        with col2:
+            st.empty()
 
+    # Wide, centered Sample & Stock section (Add tab only)
+    if current_lc_tab == "Add":
         st.markdown("---")
         st.subheader("Sample & Stock")
-        # Sample - Addis
-        s1_col1, s1_col2, s1_col3 = st.columns([1,1,1])
-        with s1_col1:
-            lc_sample_addis_yes = st.selectbox("Sample - Addis Ababa", ["No", "Yes"], key="lc_sample_addis")
-        with s1_col2:
-            lc_sample_addis_unit = st.text_input("Unit of measurement", key="lc_sample_addis_unit")
-        with s1_col3:
-            lc_sample_addis_qty = st.text_input("Qty", key="lc_sample_addis_qty")
 
-        # Stock - Addis
-        s2_col1, s2_col2, s2_col3 = st.columns([1,1,1])
-        with s2_col1:
-            lc_stock_addis_yes = st.selectbox("Stock - Addis Ababa", ["No", "Yes"], key="lc_stock_addis")
-        with s2_col2:
-            lc_stock_addis_unit = st.text_input("Unit of measurement", key="lc_stock_addis_unit")
-        with s2_col3:
-            lc_stock_addis_qty = st.text_input("Qty", key="lc_stock_addis_qty")
+        # Add form (buttons and sample/stock fields)
+        with st.form("leanchem_add_form", clear_on_submit=False):
+            # Sample - Addis
+            s1_col1, s1_col2, s1_col3 = st.columns([1,1,1])
+            with s1_col1:
+                lc_sample_addis_yes = st.selectbox("Sample - Addis Ababa", ["No", "Yes"], key="lc_sample_addis")
+            with s1_col2:
+                lc_sample_addis_unit = st.text_input("Unit of measurement", key="lc_sample_addis_unit")
+            with s1_col3:
+                lc_sample_addis_qty = st.text_input("Qty", key="lc_sample_addis_qty")
 
-        # Stock - Nairobi
-        s3_col1, s3_col2, s3_col3 = st.columns([1,1,1])
-        with s3_col1:
-            lc_stock_nairobi_yes = st.selectbox("Stock - Nairobi", ["No", "Yes"], key="lc_stock_nairobi")
-        with s3_col2:
-            lc_stock_nairobi_unit = st.text_input("Unit of measurement", key="lc_stock_nairobi_unit")
-        with s3_col3:
-            lc_stock_nairobi_qty = st.text_input("Qty", key="lc_stock_nairobi_qty")
+            # Stock - Addis
+            s2_col1, s2_col2, s2_col3 = st.columns([1,1,1])
+            with s2_col1:
+                lc_stock_addis_yes = st.selectbox("Stock - Addis Ababa", ["No", "Yes"], key="lc_stock_addis")
+            with s2_col2:
+                lc_stock_addis_unit = st.text_input("Unit of measurement", key="lc_stock_addis_unit")
+            with s2_col3:
+                lc_stock_addis_qty = st.text_input("Qty", key="lc_stock_addis_qty")
 
-        st.markdown("---")
-        # Fetch data from master data
-        colf1, colf2 = st.columns([1,1])
-        with colf1:
-            fetch_clicked = st.form_submit_button("Fetch data from master data", type="secondary")
-        with colf2:
-            save_clicked = st.form_submit_button("Save", type="primary")
+            # Stock - Nairobi
+            s3_col1, s3_col2, s3_col3 = st.columns([1,1,1])
+            with s3_col1:
+                lc_stock_nairobi_yes = st.selectbox("Stock - Nairobi", ["No", "Yes"], key="lc_stock_nairobi")
+            with s3_col2:
+                lc_stock_nairobi_unit = st.text_input("Unit of measurement", key="lc_stock_nairobi_unit")
+            with s3_col3:
+                lc_stock_nairobi_qty = st.text_input("Qty", key="lc_stock_nairobi_qty")
 
-    # Handle fetch
-    if st.session_state.get("lc_tds") and fetch_clicked:
-        pass  # no-op to satisfy mypy
-    if fetch_clicked:
+            st.markdown("---")
+            # Fetch data from master data
+            colf1, colf2 = st.columns([1,1])
+            with colf1:
+                fetch_clicked = st.form_submit_button("Fetch data from master data", type="secondary")
+            with colf2:
+                save_clicked = st.form_submit_button("Save", type="primary")
+
+    # Handle fetch (Add tab only)
+    if current_lc_tab == "Add" and st.session_state.get("lc_tds") and fetch_clicked:
+        pass
+    if current_lc_tab == "Add" and fetch_clicked:
         if not lc_tds_id:
             st.warning("Select TDS first.")
         else:
@@ -4639,8 +5037,8 @@ if st.session_state.get("main_section") == "leanchem":
             except Exception:
                 pass
 
-    # Save
-    if save_clicked:
+    # Save (Add tab only)
+    if current_lc_tab == "Add" and save_clicked:
         # Basic validation
         if not (lc_category and lc_product_type and lc_tds_id):
             st.error("Category, Product Type and TDS are required")
@@ -4671,10 +5069,96 @@ if st.session_state.get("main_section") == "leanchem":
                         "nairobi": st.session_state.get("lc_price_nairobi") or {},
                     },
                 }
-                supabase.table("leanchem_products").insert(payload).execute()
-                st.success("✅ LeanChem product saved")
+                ok, msg = _save_leanchem_product(payload)
+                if ok:
+                    if msg == "saved_fallback":
+                        st.warning("Saved under the selected TDS record (metadata) because the 'leanchem_products' table is missing or insert was blocked by RLS. See setup instructions below.")
+                    st.success("✅ LeanChem product saved")
+                    # Reset LeanChem inputs and dropdowns to defaults
+                    try:
+                        _clear_leanchem_session()
+                    except Exception:
+                        pass
+                    st.rerun()
+                else:
+                    st.error(f"Failed to save LeanChem product: {msg}")
             except Exception as e:
                 st.error(f"Failed to save LeanChem product: {e}")
+
+    # Manage tab
+    if current_lc_tab == "Manage":
+        recs = _lean_fetch_all()
+        if not recs:
+            st.info("No LeanChem products found")
+        else:
+            for r in recs:
+                rid = r.get("id")
+                with st.expander(f"{r.get('product_type') or '-'} — {r.get('tds_name') or '-'}", expanded=False):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        ecat = st.text_input("Category", value=r.get("category") or "", key=f"lc_m_cat_{rid}")
+                        etype = st.text_input("Product Type", value=r.get("product_type") or "", key=f"lc_m_type_{rid}")
+                        esamp_yes = st.selectbox("Sample - Addis Ababa", ["No","Yes"], index=(0 if (r.get('sample_addis') or {}).get('yes') != 'Yes' else 1), key=f"lc_m_s_yes_{rid}")
+                        esamp_unit = st.text_input("Sample Unit", value=(r.get("sample_addis") or {}).get("unit") or "", key=f"lc_m_s_unit_{rid}")
+                        esamp_qty = st.text_input("Sample Qty", value=(r.get("sample_addis") or {}).get("qty") or "", key=f"lc_m_s_qty_{rid}")
+                    with c2:
+                        estock_yes = st.selectbox("Stock - Addis Ababa", ["No","Yes"], index=(0 if (r.get('stock_addis') or {}).get('yes') != 'Yes' else 1), key=f"lc_m_st_yes_{rid}")
+                        estock_unit = st.text_input("Stock Unit", value=(r.get("stock_addis") or {}).get("unit") or "", key=f"lc_m_st_unit_{rid}")
+                        estock_qty = st.text_input("Stock Qty", value=(r.get("stock_addis") or {}).get("qty") or "", key=f"lc_m_st_qty_{rid}")
+                        enairobi_yes = st.selectbox("Stock - Nairobi", ["No","Yes"], index=(0 if (r.get('stock_nairobi') or {}).get('yes') != 'Yes' else 1), key=f"lc_m_n_yes_{rid}")
+                        enairobi_unit = st.text_input("Nairobi Unit", value=(r.get("stock_nairobi") or {}).get("unit") or "", key=f"lc_m_n_unit_{rid}")
+                        enairobi_qty = st.text_input("Nairobi Qty", value=(r.get("stock_nairobi") or {}).get("qty") or "", key=f"lc_m_n_qty_{rid}")
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        if st.button("💾 Save", key=f"lc_m_save_{rid}"):
+                            updates = {
+                                "category": ecat.strip() or None,
+                                "product_type": etype.strip() or None,
+                                "sample_addis": {"yes": esamp_yes, "unit": esamp_unit.strip(), "qty": esamp_qty.strip()},
+                                "stock_addis": {"yes": estock_yes, "unit": estock_unit.strip(), "qty": estock_qty.strip()},
+                                "stock_nairobi": {"yes": enairobi_yes, "unit": enairobi_unit.strip(), "qty": enairobi_qty.strip()},
+                            }
+                            ok, msg = _lean_update_record(rid, r.get("source"), updates)
+                            if ok:
+                                st.success("Updated")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed to update: {msg}")
+                    with b2:
+                        if st.button("🗑️ Delete", key=f"lc_m_del_{rid}"):
+                            ok, msg = _lean_delete_record(rid, r.get("source"))
+                            if ok:
+                                st.success("Deleted")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed to delete: {msg}")
+
+    # View tab
+    if current_lc_tab == "View":
+        recs = _lean_fetch_all()
+        if not recs:
+            st.info("No LeanChem products found")
+        else:
+            try:
+                import pandas as pd
+                rows = []
+                for r in recs:
+                    rows.append({
+                        "Category": r.get("category") or "",
+                        "Product Type": r.get("product_type") or "",
+                        "TDS": r.get("tds_name") or "",
+                        "Sample Addis": (r.get("sample_addis") or {}).get("qty") or "",
+                        "Stock Addis": (r.get("stock_addis") or {}).get("qty") or "",
+                        "Stock Nairobi": (r.get("stock_nairobi") or {}).get("qty") or "",
+                    })
+                df = pd.DataFrame(rows)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+                if st.button("📊 Export CSV", type="secondary", key="lc_view_export"):
+                    csv = df.to_csv(index=False)
+                    st.download_button("💾 Download CSV", data=csv, file_name=f"leanchem_{datetime.utcnow().strftime('%Y%m%d')}.csv", mime="text/csv")
+            except Exception:
+                for r in recs:
+                    st.write(f"- {r.get('category') or '-'} | {r.get('product_type') or '-'} | {r.get('tds_name') or '-'}")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
