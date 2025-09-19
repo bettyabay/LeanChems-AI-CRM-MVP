@@ -1590,6 +1590,15 @@ def delete_customer_interaction(customer_id: str, interaction_index: int):
         st.error(f"Error deleting interaction: {str(e)}")
         return False
 
+def delete_customer(customer_id: str):
+    """Delete a customer and all their data from the customers table."""
+    try:
+        response = supabase_client.table('customers').delete().eq('customer_id', customer_id).execute()
+        return bool(response.data)
+    except Exception as e:
+        st.error(f"Error deleting customer: {str(e)}")
+        return False
+
 def analyze_deals_multi(
         new_interaction: str,
         past_context: str,
@@ -2298,6 +2307,29 @@ def render_update_interaction_ui(user_id: str):
                         st.rerun()
                     else:
                         st.error(message)
+
+        # --- Danger Zone: Delete Customer ---
+        st.markdown("\n---\n")
+        st.subheader("⚠️ Danger Zone")
+        st.caption("Deleting a customer will remove all their interactions and cannot be undone.")
+        confirm = st.checkbox("I understand this action is irreversible.", key="confirm_delete_customer")
+        if st.button("🗑️ Delete Customer", key="delete_customer_button"):
+            if confirm:
+                with st.spinner("Deleting customer..."):
+                    ok = delete_customer(customer_id)
+                if ok:
+                    st.success(f"Customer '{customer_name}' deleted.")
+                    # Clear selection and any transient state
+                    st.session_state['selected_customer_for_update'] = None
+                    if 'current_interaction_analysis' in st.session_state:
+                        st.session_state['current_interaction_analysis'] = None
+                    if 'current_file_analysis' in st.session_state:
+                        st.session_state['current_file_analysis'] = None
+                    st.rerun()
+                else:
+                    st.error("Failed to delete customer. Please try again.")
+            else:
+                st.warning("Please confirm the irreversible action before deleting.")
 
 def get_all_customer_data():
     """Fetch all customer data with their interactions"""
