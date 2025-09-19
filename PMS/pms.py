@@ -1857,6 +1857,27 @@ def _clear_leanchem_session():
     except Exception:
         pass
 
+def _has_unsaved_market_changes() -> bool:
+    """Check if there are unsaved changes in market data"""
+    try:
+        # Check for any market form fields that have been modified
+        market_keys = [k for k in st.session_state.keys() if k.startswith("market_")]
+        for key in market_keys:
+            if st.session_state.get(key) and key not in ["market_current_tab", "pending_market_tab"]:
+                return True
+        return False
+    except Exception:
+        return False
+
+def _clear_market_session():
+    """Clear all market-related session state"""
+    try:
+        keys_to_clear = [k for k in st.session_state.keys() if k.startswith(("market_", "m_"))]
+        for k in keys_to_clear:
+            st.session_state.pop(k, None)
+    except Exception:
+        pass
+
 def _is_in_manage_tab(module: str) -> bool:
     """Check if user is currently in a manage tab"""
     try:
@@ -1871,6 +1892,9 @@ def _is_in_manage_tab(module: str) -> bool:
             return current_tab == "Manage"
         elif module == "pricing":
             current_tab = st.session_state.get("pricing_current_tab", "Add")
+            return current_tab == "Manage"
+        elif module == "market":
+            current_tab = st.session_state.get("market_current_tab", "Add")
             return current_tab == "Manage"
         return False
     except Exception:
@@ -5177,11 +5201,65 @@ if st.session_state.get("main_section") == "leanchem":
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================
-# UI - Market Master Data (placeholder)
+# UI - Market Master Data
 # ==========================
 if st.session_state.get("main_section") == "market":
     st.markdown('<h1 style="color:#1976d2; font-weight:700;">Market Master Data</h1>', unsafe_allow_html=True)
     st.markdown('<div class="form-card">', unsafe_allow_html=True)
+
+    # Track current market tab to detect tab switches
+    if "market_current_tab" not in st.session_state:
+        st.session_state["market_current_tab"] = "Add"
+    
+    # Create custom tab navigation with proper change detection
+    tab_col1, tab_col2, tab_col3 = st.columns(3)
+    
+    with tab_col1:
+        if st.button("Add", key="market_tab_add", type="primary" if st.session_state.get("market_current_tab") == "Add" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("market_current_tab")
+            if previous_tab and previous_tab != "Add" and _has_unsaved_market_changes():
+                st.session_state["pending_market_tab"] = "Add"
+                st.rerun()
+            else:
+                st.session_state["market_current_tab"] = "Add"
+                st.rerun()
+    
+    with tab_col2:
+        if st.button("Manage", key="market_tab_manage", type="primary" if st.session_state.get("market_current_tab") == "Manage" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("market_current_tab")
+            if previous_tab and previous_tab != "Manage" and _has_unsaved_market_changes():
+                st.session_state["pending_market_tab"] = "Manage"
+                st.rerun()
+            else:
+                st.session_state["market_current_tab"] = "Manage"
+                st.rerun()
+    
+    with tab_col3:
+        if st.button("View", key="market_tab_view", type="primary" if st.session_state.get("market_current_tab") == "View" else "secondary", use_container_width=True):
+            previous_tab = st.session_state.get("market_current_tab")
+            if previous_tab and previous_tab != "View" and _has_unsaved_market_changes():
+                st.session_state["pending_market_tab"] = "View"
+                st.rerun()
+            else:
+                st.session_state["market_current_tab"] = "View"
+                st.rerun()
+
+    # Pending tab change dialog
+    if st.session_state.get("pending_market_tab"):
+        st.warning("⚠️ You have unsaved changes. Do you want to discard them and switch tabs?")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Yes, discard changes", key="market_discard_yes"):
+                _clear_market_session()
+                st.session_state["market_current_tab"] = st.session_state["pending_market_tab"]
+                st.session_state.pop("pending_market_tab", None)
+                st.rerun()
+        with col2:
+            if st.button("No, stay here", key="market_discard_no"):
+                st.session_state.pop("pending_market_tab", None)
+                st.rerun()
+
+    current_tab = st.session_state.get("market_current_tab", "Add")
 
     # Helpers
     def _fetch_market_rows(*, hs_code: str | None, brand: str | None, chemical_type_id: str | None) -> list[dict]:
@@ -5225,137 +5303,433 @@ if st.session_state.get("main_section") == "market":
         except Exception:
             return None
 
-    # UI: Add
-    st.subheader("Market Data — Add")
-    mc1, mc2 = st.columns(2)
-    with mc1:
-        _market_cat_placeholder = "— Select —"
+    def _fetch_all_market_data() -> list[dict]:
+        """Fetch all market data for display"""
         try:
-            _market_cats = [_market_cat_placeholder] + get_all_categories()
-        except Exception:
-            _market_cats = [_market_cat_placeholder] + FIXED_CATEGORIES
-        m_cat = st.selectbox("Select Category", _market_cats, key="market_cat_select")
-        sel_cat = "" if m_cat == _market_cat_placeholder else m_cat
-    with mc2:
-        m_types = get_types_for_category(sel_cat) if sel_cat else []
-        _market_type_placeholder = "— Select —"
-        m_type = st.selectbox("Select Product Type", [_market_type_placeholder] + (m_types or []), key="market_type_select")
-        sel_type = "" if m_type == _market_type_placeholder else m_type
+            res = supabase.table("market_opportunities").select("*").order("created_at", desc=True).execute()
+            return res.data or []
+        except Exception as e:
+            st.error(f"Failed to fetch market data: {e}")
+            return []
 
-    mcol1, mcol2, mcol3 = st.columns([1,1,2])
-    with mcol1:
-        hs_code_in = st.text_input("HS Code", key="market_hs_code", placeholder="e.g., 390430")
-    with mcol2:
-        brand_in = st.text_input("Commercial/Brand Name", key="market_brand", placeholder="e.g., VINNAPAS 5010N")
-    with mcol3:
-        st.caption("Click to fetch from Import RAG Document (via stored market data)")
-        fetch_market = st.button("📥 Fetch Import Data", type="primary", key="market_fetch_btn")
+    def _update_market_record(record_id: str, updates: dict) -> tuple[bool, str]:
+        """Update a market record"""
+        try:
+            res = supabase.table("market_opportunities").update(updates).eq("id", record_id).execute()
+            if res.data:
+                return True, "Market record updated successfully"
+            else:
+                return False, "Failed to update market record"
+        except Exception as e:
+            return False, f"Error updating market record: {str(e)}"
 
-    # Results area
-    if fetch_market:
-        type_id = _resolve_type_id_by_cat_type(sel_cat, sel_type)
-        rows = _fetch_market_rows(hs_code=hs_code_in, brand=brand_in, chemical_type_id=type_id)
-        if not rows:
-            st.info("No matching market records found.")
-        else:
-            # Convert to DataFrame
+    def _delete_market_record(record_id: str) -> tuple[bool, str]:
+        """Delete a market record"""
+        try:
+            res = supabase.table("market_opportunities").delete().eq("id", record_id).execute()
+            if res.data:
+                return True, "Market record deleted successfully"
+            else:
+                return False, "Failed to delete market record"
+        except Exception as e:
+            return False, f"Error deleting market record: {str(e)}"
+
+    # -------- Add Market Data --------
+    if current_tab == "Add":
+        st.subheader("Add Market Data")
+        
+        mc1, mc2 = st.columns(2)
+        with mc1:
+            _market_cat_placeholder = "— Select —"
+            try:
+                _market_cats = [_market_cat_placeholder] + get_all_categories()
+            except Exception:
+                _market_cats = [_market_cat_placeholder] + FIXED_CATEGORIES
+            m_cat = st.selectbox("Select Category", _market_cats, key="market_cat_select")
+            sel_cat = "" if m_cat == _market_cat_placeholder else m_cat
+        with mc2:
+            m_types = get_types_for_category(sel_cat) if sel_cat else []
+            _market_type_placeholder = "— Select —"
+            m_type = st.selectbox("Select Product Type", [_market_type_placeholder] + (m_types or []), key="market_type_select")
+            sel_type = "" if m_type == _market_type_placeholder else m_type
+
+        mcol1, mcol2, mcol3 = st.columns([1,1,2])
+        with mcol1:
+            hs_code_in = st.text_input("HS Code", key="market_hs_code", placeholder="e.g., 390430")
+        with mcol2:
+            brand_in = st.text_input("Commercial/Brand Name", key="market_brand", placeholder="e.g., VINNAPAS 5010N")
+        with mcol3:
+            st.caption("Click to fetch from Import RAG Document (via stored market data)")
+            fetch_market = st.button("📥 Fetch Import Data", type="primary", key="market_fetch_btn")
+
+        # Results area
+        if fetch_market:
+            # Read Import Data RAG Excel file
             try:
                 import pandas as pd
-                df = pd.DataFrame(rows)
-            except Exception:
-                df = None
+                from pathlib import Path
+                from fuzzywuzzy import fuzz
+                
+                excel_path = Path("assets") / "Import Data - RAG.xlsx"
+                
+                if not excel_path.exists():
+                    st.error(f"❌ Import Data RAG file not found at: {excel_path}")
+                    st.stop()
+                
+                # Read Excel file
+                df = pd.read_excel(excel_path, engine='openpyxl')
+                
+                if df.empty:
+                    st.error("❌ Import Data RAG file is empty")
+                    st.stop()
+                
+                # Clean trader names
+                df['Trader'] = df['Trader'].astype(str).str.strip()
+                
+                # Filter data based on HS Code and Brand name if provided
+                filtered_df = df.copy()
+                
+                if hs_code_in and hs_code_in.strip():
+                    # For HS Code filtering, we'll search in trader names (as HS codes might be in company names)
+                    hs_code = hs_code_in.strip().lower()
+                    filtered_df = filtered_df[filtered_df['Trader'].str.lower().str.contains(hs_code, na=False)]
+                
+                if brand_in and brand_in.strip():
+                    # For brand filtering, search in trader names
+                    brand = brand_in.strip().lower()
+                    filtered_df = filtered_df[filtered_df['Trader'].str.lower().str.contains(brand, na=False)]
+                
+                if filtered_df.empty:
+                    st.info("No matching records found in Import Data RAG file.")
+                    st.stop()
+                
+                # Calculate total volumes by year
+                years = [2022, 2023, 2024, 2025]
+                volumes_by_year = {}
+                for year in years:
+                    if year in df.columns:
+                        volumes_by_year[year] = filtered_df[year].sum() if year in filtered_df.columns else 0.0
+                    else:
+                        volumes_by_year[year] = 0.0
+                
+                # Calculate total volume across all years
+                total_volume = sum(volumes_by_year.values())
+                
+                # Output 1: Volume of Import by Year
+                st.markdown("---")
+                st.subheader("📊 Output 1: Volume of Import by Year")
+                
+                if total_volume > 0:
+                    # Create a chart for volume by year
+                    chart_data = pd.DataFrame({
+                        'Year': list(volumes_by_year.keys()),
+                        'Volume': list(volumes_by_year.values())
+                    })
+                    
+                    st.bar_chart(chart_data.set_index('Year'))
+                    
+                    # Display summary table
+                    summary_data = []
+                    for year, volume in volumes_by_year.items():
+                        percentage = (volume / total_volume * 100) if total_volume > 0 else 0
+                        summary_data.append({
+                            'Year': year,
+                            'Volume (Tons)': f"{volume:,.2f}",
+                            'Percentage': f"{percentage:.1f}%"
+                        })
+                    
+                    st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+                else:
+                    st.info("No volume data available for the selected criteria.")
+                
+                # Output 2: Pareto Analysis (80/20 rule)
+                st.markdown("---")
+                st.subheader("📈 Output 2: Pareto Analysis - Key Customers (80/20 Rule)")
+                
+                # Calculate customer totals
+                customer_totals = filtered_df.groupby('Trader')['Grand Total'].sum().sort_values(ascending=False)
+                
+                if not customer_totals.empty:
+                    # Calculate cumulative percentages
+                    total_volume_all = customer_totals.sum()
+                    cumulative_percentage = (customer_totals.cumsum() / total_volume_all * 100)
+                    
+                    # Find customers that make up 80% of volume
+                    pareto_customers = customer_totals[cumulative_percentage <= 80]
+                    
+                    st.write(f"**Total Customers:** {len(customer_totals)}")
+                    st.write(f"**Key Customers (80% of volume):** {len(pareto_customers)}")
+                    st.write(f"**Volume Concentration:** {cumulative_percentage.iloc[len(pareto_customers)-1]:.1f}%")
+                    
+                    # Display top customers
+                    top_customers_data = []
+                    for i, (customer, volume) in enumerate(pareto_customers.items(), 1):
+                        percentage = (volume / total_volume_all * 100)
+                        top_customers_data.append({
+                            'Rank': i,
+                            'Customer': customer,
+                            'Total Volume (Tons)': f"{volume:,.2f}",
+                            'Percentage': f"{percentage:.1f}%"
+                        })
+                    
+                    st.dataframe(pd.DataFrame(top_customers_data), use_container_width=True)
+                    
+                    # Pareto chart
+                    pareto_chart_data = pd.DataFrame({
+                        'Customer': pareto_customers.index[:10],  # Top 10 for chart
+                        'Volume': pareto_customers.values[:10]
+                    })
+                    st.bar_chart(pareto_chart_data.set_index('Customer'))
+                
+                # Output 3: Customer Consumption by Year and Brand
+                st.markdown("---")
+                st.subheader("🏢 Output 3: Customer Consumption by Year and Brand")
+                
+                if not filtered_df.empty:
+                    # Prepare detailed customer data
+                    customer_details = []
+                    
+                    for _, row in filtered_df.iterrows():
+                        customer = row['Trader']
+                        for year in years:
+                            if year in df.columns and pd.notna(row[year]):
+                                volume = row[year]
+                                if volume > 0:
+                                    customer_details.append({
+                                        'Customer': customer,
+                                        'Year': year,
+                                        'Volume (Tons)': volume,
+                                        'Brand/Commercial': brand_in if brand_in else 'N/A',
+                                        'HS Code': hs_code_in if hs_code_in else 'N/A'
+                                    })
+                    
+                    if customer_details:
+                        details_df = pd.DataFrame(customer_details)
+                        
+                        # Group by customer and year for summary
+                        summary_df = details_df.groupby(['Customer', 'Year'])['Volume (Tons)'].sum().reset_index()
+                        summary_pivot = summary_df.pivot(index='Customer', columns='Year', values='Volume (Tons)').fillna(0)
+                        
+                        # Add total column
+                        summary_pivot['Total'] = summary_pivot.sum(axis=1)
+                        summary_pivot = summary_pivot.sort_values('Total', ascending=False)
+                        
+                        st.write("**Customer Consumption Summary by Year:**")
+                        st.dataframe(summary_pivot, use_container_width=True)
+                        
+                        # Detailed view
+                        with st.expander("📋 Detailed Customer Data"):
+                            st.dataframe(details_df, use_container_width=True)
+                    else:
+                        st.info("No detailed consumption data available for the selected criteria.")
+                else:
+                    st.info("No data available for detailed analysis.")
+                    
+            except Exception as e:
+                st.error(f"❌ Error processing Import Data RAG file: {str(e)}")
+                st.write("Please ensure the Excel file exists and is accessible.")
 
-            # Normalize fields
-            def _year_from_period(val):
-                try:
-                    s = str(val)
-                    return int(s[:4])
-                except Exception:
-                    return None
-            volumes_by_year = {}
-            org_to_total = {}
-            org_year_brand = {}
-            total_volume = 0.0
-            for r in rows:
-                year = _year_from_period(r.get("period"))
-                vol = 0.0
-                try:
-                    v = r.get("volume_ton")
-                    vol = float(v) if v is not None else 0.0
-                except Exception:
-                    vol = 0.0
-                if year:
-                    volumes_by_year[year] = volumes_by_year.get(year, 0.0) + vol
-                org = (r.get("organization") or "Unknown").strip()
-                org_to_total[org] = org_to_total.get(org, 0.0) + vol
-                total_volume += vol
-                # Brand/commercial name from metadata when available
-                meta = r.get("metadata") or {}
-                brand_val = meta.get("brand") or meta.get("commercial_name") or brand_in or "-"
-                org_year_brand.setdefault(org, {}).setdefault(year, {}).setdefault(str(brand_val), 0.0)
-                org_year_brand[org][year][str(brand_val)] += vol
+    # -------- View Market Data --------
+    elif current_tab == "View":
+        st.subheader("View Market Data")
+        
+        # Filters
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            hs_filter = st.text_input("Filter by HS Code", placeholder="e.g., 390430")
+        with col2:
+            brand_filter = st.text_input("Filter by Brand/Commercial Name", placeholder="e.g., VINNAPAS")
+        with col3:
+            search_filter = st.text_input("Search in all fields", placeholder="Search...")
+        
+        if st.button("Reset Filters", type="secondary"):
+            hs_filter = ""
+            brand_filter = ""
+            search_filter = ""
+            st.rerun()
+        
+        # Fetch and display data
+        market_data = _fetch_all_market_data()
+        filtered_data = []
+        
+        for record in market_data:
+            metadata = record.get("metadata", {})
+            raw_data = record.get("raw_data", {})
+            
+            # Apply filters
+            if hs_filter and hs_filter.lower() not in str(metadata.get("hs_code", "")).lower():
+                continue
+            if brand_filter and brand_filter.lower() not in str(metadata.get("brand", "")).lower():
+                continue
+            if search_filter:
+                search_text = " ".join([
+                    str(metadata.get("hs_code", "")),
+                    str(metadata.get("brand", "")),
+                    str(metadata.get("commercial_name", "")),
+                    str(raw_data)
+                ]).lower()
+                if search_filter.lower() not in search_text:
+                    continue
+            
+            filtered_data.append(record)
+        
+        if filtered_data:
+            st.success(f"Found {len(filtered_data)} market records")
+            
+            # Display data in expandable cards
+            for i, record in enumerate(filtered_data):
+                metadata = record.get("metadata", {})
+                raw_data = record.get("raw_data", {})
+                
+                with st.expander(f"📊 {metadata.get('commercial_name', 'Unnamed')} - {metadata.get('hs_code', 'No HS Code')}"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Basic Information:**")
+                        st.write(f"**HS Code:** {metadata.get('hs_code', 'N/A')}")
+                        st.write(f"**Brand:** {metadata.get('brand', 'N/A')}")
+                        st.write(f"**Commercial Name:** {metadata.get('commercial_name', 'N/A')}")
+                        st.write(f"**Period:** {record.get('period', 'N/A')}")
+                    
+                    with col2:
+                        st.markdown("**Market Data:**")
+                        if raw_data:
+                            for key, value in raw_data.items():
+                                if isinstance(value, dict):
+                                    st.write(f"**{key}:**")
+                                    for sub_key, sub_value in value.items():
+                                        st.write(f"  - {sub_key}: {sub_value}")
+                                else:
+                                    st.write(f"**{key}:** {value}")
+                        else:
+                            st.write("No detailed market data available")
+                    
+                    st.markdown("---")
+                    st.write(f"**Created:** {record.get('created_at', 'N/A')}")
+        else:
+            st.info("No market data found matching the current filters.")
 
-            # Output 1: Volume of Import by year
-            st.markdown("---")
-            st.subheader("Output 1: Volume of Import by Year")
-            if volumes_by_year:
-                try:
-                    import pandas as pd
-                    yrs = sorted(volumes_by_year.keys())
-                    df_y = pd.DataFrame({"Year": yrs, "Volume (ton)": [volumes_by_year[y] for y in yrs]})
-                    st.dataframe(df_y, use_container_width=True, hide_index=True)
-                except Exception:
-                    for y in sorted(volumes_by_year.keys()):
-                        st.write(f"{y}: {volumes_by_year[y]:,.2f} ton")
+    # -------- Manage Market Data --------
+    elif current_tab == "Manage":
+        st.subheader("Manage Market Data")
+        
+        # Auth gate
+        if not sb_user:
+            st.info("Please sign in to access Manage Market Data.")
+        elif not is_manager:
+            st.error("You do not have permission to access Manage Market Data.")
+        else:
+            # Filters for management
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                manage_hs_filter = st.text_input("Filter by HS Code", key="manage_hs_filter", placeholder="e.g., 390430")
+            with col2:
+                manage_brand_filter = st.text_input("Filter by Brand", key="manage_brand_filter", placeholder="e.g., VINNAPAS")
+            with col3:
+                manage_search_filter = st.text_input("Search", key="manage_search_filter", placeholder="Search...")
+            
+            if st.button("Reset Filters", key="manage_reset_filters", type="secondary"):
+                manage_hs_filter = ""
+                manage_brand_filter = ""
+                manage_search_filter = ""
+                st.rerun()
+            
+            # Fetch and display data for management
+            market_data = _fetch_all_market_data()
+            filtered_data = []
+            
+            for record in market_data:
+                metadata = record.get("metadata", {})
+                raw_data = record.get("raw_data", {})
+                
+                # Apply filters
+                if manage_hs_filter and manage_hs_filter.lower() not in str(metadata.get("hs_code", "")).lower():
+                    continue
+                if manage_brand_filter and manage_brand_filter.lower() not in str(metadata.get("brand", "")).lower():
+                    continue
+                if manage_search_filter:
+                    search_text = " ".join([
+                        str(metadata.get("hs_code", "")),
+                        str(metadata.get("brand", "")),
+                        str(metadata.get("commercial_name", "")),
+                        str(raw_data)
+                    ]).lower()
+                    if manage_search_filter.lower() not in search_text:
+                        continue
+                
+                filtered_data.append(record)
+            
+            if filtered_data:
+                st.success(f"Found {len(filtered_data)} market records")
+                
+                # Display data in management table
+                for i, record in enumerate(filtered_data):
+                    metadata = record.get("metadata", {})
+                    record_id = record.get("id")
+                    
+                    with st.container():
+                        st.markdown("---")
+                        col1, col2, col3 = st.columns([3, 1, 1])
+                        
+                        with col1:
+                            st.markdown(f"**{metadata.get('commercial_name', 'Unnamed')}**")
+                            st.caption(f"HS Code: {metadata.get('hs_code', 'N/A')} | Brand: {metadata.get('brand', 'N/A')} | Period: {record.get('period', 'N/A')}")
+                        
+                        with col2:
+                            if st.button("✏️ Edit", key=f"edit_market_{record_id}"):
+                                st.session_state[f"editing_market_{record_id}"] = True
+                                st.rerun()
+                        
+                        with col3:
+                            if st.button("🗑️ Delete", key=f"delete_market_{record_id}"):
+                                success, message = _delete_market_record(record_id)
+                                if success:
+                                    st.success(message)
+                                else:
+                                    st.error(message)
+                                st.rerun()
+                        
+                        # Edit form
+                        if st.session_state.get(f"editing_market_{record_id}"):
+                            st.markdown("**Edit Market Record:**")
+                            
+                            edit_col1, edit_col2 = st.columns(2)
+                            with edit_col1:
+                                new_hs_code = st.text_input("HS Code", value=metadata.get("hs_code", ""), key=f"edit_hs_{record_id}")
+                                new_brand = st.text_input("Brand", value=metadata.get("brand", ""), key=f"edit_brand_{record_id}")
+                                new_commercial_name = st.text_input("Commercial Name", value=metadata.get("commercial_name", ""), key=f"edit_commercial_{record_id}")
+                            
+                            with edit_col2:
+                                new_period = st.text_input("Period", value=record.get("period", ""), key=f"edit_period_{record_id}")
+                                new_notes = st.text_area("Notes", value=record.get("notes", ""), key=f"edit_notes_{record_id}")
+                            
+                            save_col1, save_col2 = st.columns(2)
+                            with save_col1:
+                                if st.button("💾 Save Changes", key=f"save_market_{record_id}"):
+                                    updates = {
+                                        "metadata": {
+                                            **metadata,
+                                            "hs_code": new_hs_code,
+                                            "brand": new_brand,
+                                            "commercial_name": new_commercial_name
+                                        },
+                                        "period": new_period,
+                                        "notes": new_notes
+                                    }
+                                    success, message = _update_market_record(record_id, updates)
+                                    if success:
+                                        st.success(message)
+                                        st.session_state.pop(f"editing_market_{record_id}", None)
+                                    else:
+                                        st.error(message)
+                                    st.rerun()
+                            
+                            with save_col2:
+                                if st.button("❌ Cancel", key=f"cancel_market_{record_id}"):
+                                    st.session_state.pop(f"editing_market_{record_id}", None)
+                                    st.rerun()
             else:
-                st.caption("No yearly data")
-
-            # Output 2: Pareto 80/20 key customers
-            st.markdown("---")
-            st.subheader("Output 2: Key Customers (80/20)")
-            if total_volume > 0:
-                sorted_orgs = sorted(org_to_total.items(), key=lambda x: x[1], reverse=True)
-                cum = 0.0
-                pareto = []
-                for org, vol in sorted_orgs:
-                    if cum / total_volume < 0.8:
-                        pareto.append((org, vol))
-                        cum += vol
-                try:
-                    import pandas as pd
-                    df_p = pd.DataFrame([(o, v) for o, v in pareto], columns=["Customer", "Total Volume (ton)"])
-                    st.dataframe(df_p, use_container_width=True, hide_index=True)
-                except Exception:
-                    for org, vol in pareto:
-                        st.write(f"- {org}: {vol:,.2f} ton")
-            else:
-                st.caption("No volume found")
-
-            # Output 3: Per-customer volume by year and brand
-            st.markdown("---")
-            st.subheader("Output 3: Per-customer Yearly Volumes (by Brand)")
-            if org_year_brand:
-                for org, ydata in org_year_brand.items():
-                    with st.expander(f"{org}", expanded=False):
-                        try:
-                            import pandas as pd
-                            rows_tab = []
-                            for y in sorted(ydata.keys()):
-                                brand_map = ydata[y]
-                                for bname, vol in brand_map.items():
-                                    rows_tab.append({"Year": y, "Brand": bname, "Volume (ton)": vol})
-                            if rows_tab:
-                                df_org = pd.DataFrame(rows_tab)
-                                st.dataframe(df_org, use_container_width=True, hide_index=True)
-                            else:
-                                st.caption("No data")
-                        except Exception:
-                            for y in sorted(ydata.keys()):
-                                st.write(f"{y}")
-                                for bname, vol in ydata[y].items():
-                                    st.write(f"- {bname}: {vol:,.2f} ton")
-            else:
-                st.caption("No per-customer details")
+                st.info("No market data found matching the current filters.")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
