@@ -1268,6 +1268,7 @@ def create_new_customer(customer_name: str, user_id: str):
 # Authentication functions
 def sign_up(email, password, full_name):
     try:
+        # 1) Create account
         response = supabase_client.auth.sign_up({
             "email": email,
             "password": password,
@@ -1277,12 +1278,56 @@ def sign_up(email, password, full_name):
                 }
             }
         })
-        if response and response.user:
-            st.success("Sign up successful! Please check your email and confirm your address before logging in.")
-            # Do NOT log the user in automatically after signup
-            # Do NOT set st.session_state.authenticated = True or st.session_state.user = response.user here
+
+        # 2) Try to use returned session, otherwise attempt immediate sign-in (with retries)
+        session = getattr(response, "session", None)
+        user_obj = getattr(response, "user", None)
+        if not session or not user_obj:
+            import time as _t
+            session = None
+            user_obj = None
+            for _i in range(24):  # ~12s total retry
+                try:
+                    resp2 = supabase_client.auth.sign_in_with_password({
+                        "email": email,
+                        "password": password
+                    })
+                    session = getattr(resp2, "session", None)
+                    user_obj = getattr(resp2, "user", None)
+                    if session and user_obj:
+                        break
+                except Exception:
+                    pass
+                _t.sleep(0.5)
+
+        if session and user_obj:
+            st.session_state.authenticated = True
+            st.session_state.user = user_obj
+            st.success("✅ Account created and signed in.")
+            st.rerun()
+        else:
+            st.error("❌ Account created but auto-login failed. Please try signing in.")
         return response
     except Exception as e:
+        # Even if sign_up errors (e.g., email rate limit), try sign-in in case account exists
+        try:
+            import time as _t
+            for _i in range(24):
+                try:
+                    resp2 = supabase_client.auth.sign_in_with_password({
+                        "email": email,
+                        "password": password
+                    })
+                    if resp2 and resp2.user and resp2.session:
+                        st.session_state.authenticated = True
+                        st.session_state.user = resp2.user
+                        st.success("✅ Account created and signed in.")
+                        st.rerun()
+                except Exception:
+                    pass
+                _t.sleep(0.5)
+        except Exception:
+            pass
         st.error(f"Error signing up: {str(e)}")
         return None
 
@@ -3149,11 +3194,8 @@ with st.sidebar:
             signup_button = st.button("Sign Up", key="sidebar_signup_button", type="primary")
             if signup_button:
                 if signup_email and signup_password and signup_name:
-                    response = sign_up(signup_email, signup_password, signup_name)
-                    if response and response.user:
-                        st.success("Sign up successful! Please check your email to confirm your account.")
-                    else:
-                        st.error("Sign up failed. Please try again.")
+                    # Auto-create and auto-login; any errors are handled inside sign_up
+                    sign_up(signup_email, signup_password, signup_name)
                 else:
                     st.warning("Please fill in all fields.")
     else:

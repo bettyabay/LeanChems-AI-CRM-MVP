@@ -480,6 +480,9 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # Optional: where Supabase should redirect users after they click the email verification link
 # Example: EMAIL_REDIRECT_URL="https://your-deployed-streamlit-app.com"
 EMAIL_REDIRECT_URL = os.getenv("EMAIL_REDIRECT_URL", "")
+# If set to "false", we will not require email confirmation and will auto-login after signup
+# Default is false to avoid any email configuration out of the box
+SUPABASE_REQUIRE_EMAIL_CONFIRM = os.getenv("SUPABASE_REQUIRE_EMAIL_CONFIRM", "false").strip().lower() == "true"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Configure Gemini AI
@@ -627,33 +630,79 @@ def _render_login_screen():
             else:
                 with st.spinner("📝 Creating your account..."):
                     try:
-                        # Request email verification with (optionally) a redirect URL back to this app
+                        # Create account and immediately sign in
                         payload = {"email": su_email_s, "password": su_password}
-                        if EMAIL_REDIRECT_URL:
-                            payload["options"] = {"email_redirect_to": EMAIL_REDIRECT_URL}
                         resp = supabase.auth.sign_up(payload)
-                        # Ask Supabase to send a magic sign-in link as part of verification flow
-                        try:
-                            if EMAIL_REDIRECT_URL:
-                                supabase.auth.resend({
-                                    "type": "signup",
-                                    "email": su_email_s,
-                                    "options": {"email_redirect_to": EMAIL_REDIRECT_URL}
-                                })
-                            else:
-                                supabase.auth.resend({
-                                    "type": "signup",
-                                    "email": su_email_s,
-                                })
-                        except Exception:
-                            pass
-                        st.success("✅ Account created. Please check your email for a verification link. After verifying, use the emailed sign-in link or return here to sign in.")
-                        st.info("If you don't see the email, check spam. You can also click 'Resend verification email' below.")
-                        st.session_state["pending_verify_email"] = su_email_s
-                        st.session_state["auth_mode"] = "login"
-                        st.rerun()
+
+                        session = getattr(resp, "session", None)
+                        user_obj = getattr(resp, "user", None)
+                        if not session:
+                            import time as _t
+                            session = None
+                            user_obj = None
+                            for _i in range(24):  # retry up to ~12 seconds total
+                                try:
+                                    resp2 = supabase.auth.sign_in_with_password({
+                                        "email": su_email_s,
+                                        "password": su_password
+                                    })
+                                    session = getattr(resp2, "session", None)
+                                    user_obj = getattr(resp2, "user", None)
+                                    if session and user_obj:
+                                        break
+                                except Exception:
+                                    pass
+                                _t.sleep(0.5)
+
+                        if session and user_obj:
+                            st.session_state["authenticated"] = True
+                            st.session_state["user_email"] = su_email_s
+                            st.session_state["user_name"] = (user_obj.user_metadata or {}).get("name", su_email_s.split("@")[0]) if hasattr(user_obj, "user_metadata") else su_email_s.split("@")[0]
+                            st.session_state["sb_user"] = {
+                                "id": user_obj.id,
+                                "email": user_obj.email,
+                                "role": ((user_obj.user_metadata or {}).get("role") if hasattr(user_obj, "user_metadata") else None) or "viewer",
+                            }
+                            st.session_state["sb_session"] = {
+                                "access_token": session.access_token,
+                                "refresh_token": session.refresh_token,
+                            }
+                            st.success("✅ Account created and signed in.")
+                            st.rerun()
+                        else:
+                            st.error("❌ Account created but auto-login failed. Please sign in.")
                     except Exception as e:
-                        st.error(f"❌ Sign up failed: {e}")
+                        # Even if sign_up errors (e.g., email rate limit), try sign-in in case the account exists
+                        import time as _t
+                        signed_in_ok = False
+                        for _i in range(24):  # retry up to ~12 seconds total
+                            try:
+                                resp2 = supabase.auth.sign_in_with_password({
+                                    "email": su_email_s,
+                                    "password": su_password
+                                })
+                                if resp2 and resp2.user and resp2.session:
+                                    st.session_state["authenticated"] = True
+                                    st.session_state["user_email"] = su_email_s
+                                    st.session_state["user_name"] = (resp2.user.user_metadata or {}).get("name", su_email_s.split("@")[0]) if hasattr(resp2.user, "user_metadata") else su_email_s.split("@")[0]
+                                    st.session_state["sb_user"] = {
+                                        "id": resp2.user.id,
+                                        "email": resp2.user.email,
+                                        "role": ((resp2.user.user_metadata or {}).get("role") if hasattr(resp2.user, "user_metadata") else None) or "viewer",
+                                    }
+                                    st.session_state["sb_session"] = {
+                                        "access_token": resp2.session.access_token,
+                                        "refresh_token": resp2.session.refresh_token,
+                                    }
+                                    st.success("✅ Account created and signed in.")
+                                    st.rerun()
+                                    signed_in_ok = True
+                                    break
+                            except Exception:
+                                pass
+                            _t.sleep(0.5)
+                        if not signed_in_ok:
+                            st.error(f"❌ Sign up failed: {e}")
     else:
         # Default: Show login form
         with st.form("login_form_full", clear_on_submit=False):
@@ -706,26 +755,7 @@ def _render_login_screen():
                     except Exception as e:
                         st.error(f"❌ Login failed: {e}")
 
-        # Offer to resend verification email when returning to login after signup
-        if st.session_state.get("pending_verify_email"):
-            pending_email = _sanitize_email(st.session_state.get("pending_verify_email"))
-            st.caption(f"A verification email was sent to {pending_email}. Not received?")
-            if st.button("Resend verification email", type="secondary"):
-                try:
-                    if EMAIL_REDIRECT_URL:
-                        supabase.auth.resend({
-                            "type": "signup",
-                            "email": pending_email,
-                            "options": {"email_redirect_to": EMAIL_REDIRECT_URL}
-                        })
-                    else:
-                        supabase.auth.resend({
-                            "type": "signup",
-                            "email": pending_email,
-                        })
-                    st.success("✅ Verification email resent.")
-                except Exception as e:
-                    st.error(f"❌ Failed to resend verification email: {e}")
+        # Removed verification email flow: no resend UI
     
     # System description with three key points
     st.markdown("""
