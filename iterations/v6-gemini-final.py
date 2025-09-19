@@ -1548,6 +1548,48 @@ def get_customer_interactions(customer_id: str):
         st.error(f"Error fetching interactions: {str(e)}")
         return []
 
+def delete_customer_interaction(customer_id: str, interaction_index: int):
+    """Delete a single interaction (and aligned embedding/metadata) by index for a customer."""
+    try:
+        customer = supabase_client.table('customers').select("*").eq('customer_id', customer_id).single().execute()
+        if not customer.data:
+            st.error("Customer not found.")
+            return False
+
+        input_conversation = customer.data.get('input_conversation') or []
+        output_conversation = customer.data.get('output_conversation') or []
+        interaction_embeddings = customer.data.get('interaction_embeddings') or []
+        interaction_metadata = customer.data.get('interaction_metadata') or []
+
+        # Validate index against the shortest list among the aligned arrays
+        aligned_len = min(len(input_conversation), len(output_conversation), len(interaction_embeddings), len(interaction_metadata))
+        if interaction_index < 0 or interaction_index >= aligned_len:
+            st.error("Invalid interaction index.")
+            return False
+
+        def remove_at(lst):
+            if isinstance(lst, list) and 0 <= interaction_index < len(lst):
+                return lst[:interaction_index] + lst[interaction_index+1:]
+            return lst
+
+        updated_inputs = remove_at(input_conversation)
+        updated_outputs = remove_at(output_conversation)
+        updated_embs = remove_at(interaction_embeddings)
+        updated_metas = remove_at(interaction_metadata)
+
+        response = supabase_client.table('customers').update({
+            'input_conversation': updated_inputs,
+            'output_conversation': updated_outputs,
+            'interaction_embeddings': updated_embs,
+            'interaction_metadata': updated_metas,
+            'updated_at': datetime.datetime.now().isoformat()
+        }).eq('customer_id', customer_id).execute()
+
+        return bool(response.data)
+    except Exception as e:
+        st.error(f"Error deleting interaction: {str(e)}")
+        return False
+
 def analyze_deals_multi(
         new_interaction: str,
         past_context: str,
@@ -2093,6 +2135,18 @@ def render_update_interaction_ui(user_id: str):
                 with st.expander(f"{interaction['created_at']} | Interaction #{len(interactions)-idx}"):
                     st.markdown(f"**Input:** {interaction['interaction_input']}")
                     st.markdown(f"**AI Output:** {interaction['llm_output_summary']}")
+                    # Delete button for this interaction
+                    col_a, col_b = st.columns([0.2, 0.8])
+                    with col_a:
+                        # Map reversed display index back to original index in arrays
+                        original_index = len(interactions) - 1 - idx
+                        if st.button("🗑️ Delete", key=f"delete_interaction_{original_index}"):
+                            success = delete_customer_interaction(customer_id, original_index)
+                            if success:
+                                st.success("Interaction deleted.")
+                                st.rerun()
+                            else:
+                                st.error("Failed to delete interaction.")
             if st.button("Select Another Customer"):
                 st.session_state['selected_customer_for_update'] = None
                 if 'current_interaction_analysis' in st.session_state:
