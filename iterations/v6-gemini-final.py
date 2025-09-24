@@ -1947,7 +1947,9 @@ def update_customer_interaction(customer_id: str, new_input: str, new_output: st
         
         # 6. Send deal update notification if deals are mentioned
         if response.data:
-            customer_name = response.data.get('customer_name', 'Unknown Customer')
+            # Supabase returns a list of updated rows for update(); pick first
+            updated_row = response.data[0] if isinstance(response.data, list) and len(response.data) > 0 else response.data
+            customer_name = updated_row.get('customer_name', 'Unknown Customer') if isinstance(updated_row, dict) else 'Unknown Customer'
             
             # Check if the interaction contains deal-related information
             if any(keyword in new_output.lower() for keyword in ['deal', 'quote', 'order', 'purchase', 'rfq', 'po']):
