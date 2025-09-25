@@ -2761,7 +2761,9 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                 "technical_specification": _get_first(["technical_specification","technical_specs","technicalspecification","technicalspecs","specification","specifications"]) or "",
             }
 
-        if st.session_state.get("tds_hydrate_pending"):
+        # Capture whether we are in the immediate hydration pass to decide if we overwrite widget values
+        _hydrate_now = bool(st.session_state.get("tds_hydrate_pending"))
+        if _hydrate_now:
             _ensure_hydrated()
             st.session_state["tds_hydrate_pending"] = False
         else:
@@ -2769,29 +2771,30 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             if st.session_state.get("extracted_tds_data") and not st.session_state.get("tds_defaults"):
                 _ensure_hydrated()
 
+        # If we have defaults, push them into widget state before rendering inputs.
+        # Only overwrite existing user entries on the immediate hydration pass, otherwise fill blanks only.
+        _tds_defs_for_widgets = st.session_state.get("tds_defaults") or {}
+        if _tds_defs_for_widgets:
+            _widget_defaults_map = {
+                "tds_generic_name": _tds_defs_for_widgets.get("generic_product_name", ""),
+                "tds_trade_name": _tds_defs_for_widgets.get("trade_name", ""),
+                "tds_supplier_name": _tds_defs_for_widgets.get("supplier_name", ""),
+                "tds_packaging": _tds_defs_for_widgets.get("packaging_size_type", ""),
+                "tds_net_weight": _tds_defs_for_widgets.get("net_weight", ""),
+                "tds_tech_spec": _tds_defs_for_widgets.get("technical_specification", ""),
+            }
+            for _wkey, _wval in _widget_defaults_map.items():
+                if _hydrate_now or not st.session_state.get(_wkey):
+                    st.session_state[_wkey] = _wval
+
         col_ai1, col_ai2 = st.columns(2)
         _norm_vals = st.session_state.get("extracted_tds_data_norm") or {}
         
         with col_ai1:
             _tds_defs = st.session_state.get("tds_defaults") or {}
-            generic_product_name = st.text_input(
-                "Generic Product Name",
-                value=_tds_defs.get("generic_product_name") or _norm_vals.get("generic_product_name", ""),
-                placeholder="AI extracted generic name",
-                key="tds_generic_name"
-            )
-            trade_name = st.text_input(
-                "Trade Name (Model Name)", 
-                value=_tds_defs.get("trade_name") or _norm_vals.get("trade_name", ""),
-                placeholder="AI extracted trade/model name",
-                key="tds_trade_name"
-            )
-            supplier_name = st.text_input(
-                "Supplier Name", 
-                value=_tds_defs.get("supplier_name") or _norm_vals.get("supplier_name", ""),
-                placeholder="AI extracted supplier name",
-                key="tds_supplier_name"
-            )
+            _gen_default = _tds_defs.get("generic_product_name") or _norm_vals.get("generic_product_name", "")
+            _trade_default = _tds_defs.get("trade_name") or _norm_vals.get("trade_name", "")
+            _supp_default = _tds_defs.get("supplier_name") or _norm_vals.get("supplier_name", "")
             # Resolve value from defaults or normalized key variants
             _pkg_val = _tds_defs.get("packaging_size_type")
             if not _pkg_val:
@@ -2808,28 +2811,39 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
                     if _norm_vals.get(_k):
                         _pkg_val = _norm_vals.get(_k)
                         break
-            packaging_size_type = st.text_input(
-                "Packaging Size & Type", 
-                value=_pkg_val or "",
-                placeholder="AI extracted packaging info",
-                key="tds_packaging"
-            )
+            # Only pass value if key not in session state to avoid warning
+            _gen_kwargs = {"key": "tds_generic_name", "placeholder": "AI extracted generic name"}
+            if "tds_generic_name" not in st.session_state:
+                _gen_kwargs["value"] = _gen_default
+            generic_product_name = st.text_input("Generic Product Name", **_gen_kwargs)
+
+            _trade_kwargs = {"key": "tds_trade_name", "placeholder": "AI extracted trade/model name"}
+            if "tds_trade_name" not in st.session_state:
+                _trade_kwargs["value"] = _trade_default
+            trade_name = st.text_input("Trade Name (Model Name)", **_trade_kwargs)
+
+            _supp_kwargs = {"key": "tds_supplier_name", "placeholder": "AI extracted supplier name"}
+            if "tds_supplier_name" not in st.session_state:
+                _supp_kwargs["value"] = _supp_default
+            supplier_name = st.text_input("Supplier Name", **_supp_kwargs)
+
+            _pkg_kwargs = {"key": "tds_packaging", "placeholder": "AI extracted packaging info"}
+            if "tds_packaging" not in st.session_state:
+                _pkg_kwargs["value"] = _pkg_val or ""
+            packaging_size_type = st.text_input("Packaging Size & Type", **_pkg_kwargs)
         with col_ai2:
-            net_weight = st.text_input(
-                "Net Weight", 
-                value=_tds_defs.get("net_weight") or _norm_vals.get("net_weight", ""),
-                placeholder="AI extracted weight",
-                key="tds_net_weight"
-            )
+            _net_default = _tds_defs.get("net_weight") or _norm_vals.get("net_weight", "")
+            _net_kwargs = {"key": "tds_net_weight", "placeholder": "AI extracted weight"}
+            if "tds_net_weight" not in st.session_state:
+                _net_kwargs["value"] = _net_default
+            net_weight = st.text_input("Net Weight", **_net_kwargs)
             # HS Code input removed; use AI-extracted/default value silently
             hs_code = _tds_defs.get("hs_code") or _norm_vals.get("hs_code", "")
-            technical_spec = st.text_area(
-                "Technical Specification", 
-                value=_tds_defs.get("technical_specification") or _norm_vals.get("technical_specification", ""),
-                placeholder="AI extracted technical specifications", 
-                height=100,
-                key="tds_tech_spec"
-            )
+            _tech_default = _tds_defs.get("technical_specification") or _norm_vals.get("technical_specification", "")
+            _tech_kwargs = {"key": "tds_tech_spec", "placeholder": "AI extracted technical specifications", "height": 100}
+            if "tds_tech_spec" not in st.session_state:
+                _tech_kwargs["value"] = _tech_default
+            technical_spec = st.text_area("Technical Specification", **_tech_kwargs)
 
 
 
