@@ -2675,6 +2675,36 @@ if st.session_state.get("main_section") == "sourcing" and st.session_state.get("
             help="Tip: On mobile, choose 'Files' or 'Browse' to pick from device storage."
         )
 
+        # If user removes the uploaded file after extraction, clear hydrated fields and extracted data
+        if not uploaded_file and (
+            st.session_state.get("extracted_tds_data") or st.session_state.get("tds_defaults")
+        ):
+            _cleared_any = False
+            for _k in [
+                "extracted_tds_data",
+                "extracted_tds_data_norm",
+                "tds_defaults",
+                "tds_hydrate_pending",
+            ]:
+                if _k in st.session_state:
+                    st.session_state.pop(_k, None)
+                    _cleared_any = True
+            # Clear widget values back to empty
+            for _w in [
+                "tds_generic_name",
+                "tds_trade_name",
+                "tds_supplier_name",
+                "tds_packaging",
+                "tds_net_weight",
+                "tds_tech_spec",
+            ]:
+                if st.session_state.get(_w):
+                    st.session_state[_w] = ""
+                    _cleared_any = True
+            if _cleared_any:
+                st.info("TDS removed — cleared AI-extracted fields.")
+                st.rerun()
+
         # AI Processing Button (single source)
         if uploaded_file and gemini_model:
             col_ai_process1, col_ai_process2 = st.columns([1, 3])
