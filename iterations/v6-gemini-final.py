@@ -575,6 +575,19 @@ def get_openai_client():
 
 @st.cache_resource
 def get_memory():
+    class NoopMemory:
+        def search(self, query: str = "", user_id: str = "", limit: int = 3):
+            return {"results": []}
+
+        def add(self, *args, **kwargs):
+            return None
+
+    # Validate connection string first
+    db_url = os.environ.get('DATABASE_URL')
+    if not db_url:
+        st.warning("DATABASE_URL not set. Memory features are disabled.")
+        return NoopMemory()
+
     config = {
         "llm": {
             "provider": LLM_PROVIDER,
@@ -585,12 +598,17 @@ def get_memory():
         "vector_store": {
             "provider": "supabase",
             "config": {
-                "connection_string": os.environ['DATABASE_URL'],
+                "connection_string": db_url,
                 "collection_name": "memories"
             }
-        }    
+        }
     }
-    return Memory.from_config(config)
+
+    try:
+        return Memory.from_config(config)
+    except Exception as e:
+        st.error(f"Memory backend init failed; running without vector memory. Error: {str(e)}")
+        return NoopMemory()
 
 # Get cached resources
 openai_client = get_openai_client()
