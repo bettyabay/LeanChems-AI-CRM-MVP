@@ -404,6 +404,21 @@ def ensure_vector(embedding):
         raise ValueError("Embedding is a single number, expected a list of floats.")
     raise ValueError(f"Unexpected embedding type: {type(embedding)}")
 
+def ensure_vector_array_for_pgvector_array(embeddings):
+    """Ensure value is a list of vectors (list[list[float]]) for pgvector[] column."""
+    normalized_list = []
+    # If a single vector was provided, wrap it
+    if isinstance(embeddings, (list, tuple)) and (len(embeddings) == 0 or isinstance(embeddings[0], (int, float, str, list, tuple))):
+        # Detect single vector (list of numbers)
+        if len(embeddings) == 0 or isinstance(embeddings[0], (int, float, str)):
+            embeddings = [embeddings]
+    for vec in embeddings:
+        v = ensure_vector(vec)
+        # Ensure final is list[float]
+        v = [float(x) for x in v]
+        normalized_list.append(v)
+    return normalized_list
+
 # --- Subject Management Functions (transformed from customer functions) ---
 
 def generate_subject_id():
@@ -560,8 +575,7 @@ def create_new_subject(subject_name: str, user_id: str):
         
         # Generate embedding for the profile input
         embedding = gemini_embed(profile_input)
-        embedding = ensure_vector(embedding)
-        interaction_embeddings = [embedding]  # Always a list of lists
+        interaction_embeddings = ensure_vector_array_for_pgvector_array(ensure_vector(embedding))
         
         interaction_json = {
             "input": profile_input,
@@ -674,30 +688,8 @@ def update_subject_interaction(subject_id: str, new_input: str, new_output: str,
     """Update subject interaction, storing a structured JSON object in the metadata."""
     # 1. Generate embedding for the new input
     embedding = gemini_embed(new_input)
-    import json
     import numpy as np
-    
-    # Robust ensure_vector function
-    def ensure_vector(x):
-        if isinstance(x, list):
-            if len(x) > 0 and isinstance(x[0], list):
-                return x[0]
-            return x
-        if isinstance(x, str):
-            try:
-                val = json.loads(x)
-                if isinstance(val, list):
-                    return val
-                else:
-                    return [float(val)]
-            except Exception:
-                return [float(x)]
-        if isinstance(x, float) or isinstance(x, int):
-            return [float(x)]
-        if isinstance(x, np.ndarray):
-            return x.tolist()
-        return [float(x)]
-
+    # Normalize embedding to list[float]
     embedding = ensure_vector(embedding)
     
     # 2. Create the new interaction object (as JSON)
@@ -731,8 +723,8 @@ def update_subject_interaction(subject_id: str, new_input: str, new_output: str,
     updated_embs = embs + [embedding]
     updated_metas = metas + [new_interaction_json]
 
-    # Ensure every embedding is a list of floats
-    updated_embs = [ensure_vector(e) for e in updated_embs]
+    # Normalize to list of float vectors for pgvector[]
+    updated_embs = ensure_vector_array_for_pgvector_array(updated_embs)
     # Ensure every metadata is a dict
     updated_metas = [m if isinstance(m, dict) else json.loads(m) for m in updated_metas]
 
@@ -1371,10 +1363,10 @@ if 'leanai_view' not in st.session_state:
 with st.sidebar:
     st.sidebar.title("🤖 LeanAI Model MVP")
     # Add the logo here with error handling
-    try:
-        st.image("../leanchems logo.png", width=150)
-    except:
-        st.markdown("### 🤖 LeanAI Model MVP")
+ #   try:
+   #     st.image("../leanchems logo.png", width=150)
+   # except:
+  #      st.markdown("### 🤖 LeanAI Model MVP")
     
     if not st.session_state.authenticated:
         tab1, tab2 = st.tabs(["Login", "Sign Up"])
