@@ -28,6 +28,9 @@ beautifulsoup4>=4.12.0
 # Data Processing
 pandas>=2.0.0
 
+# Vector store client (required by mem0 supabase backend)
+vecs>=0.4.5
+
 # Environment and Configuration
 python-dotenv>=1.0.0
 
