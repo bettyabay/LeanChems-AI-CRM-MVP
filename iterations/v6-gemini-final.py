@@ -229,6 +229,7 @@ GEMINI_EMBED_URL = f'https://generativelanguage.googleapis.com/v1/models/{GEMINI
 # --- Telegram Notification Configuration ---
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', None)
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', None)
+TELEGRAM_CHAT_IDS = [c.strip() for c in (TELEGRAM_CHAT_ID or '').split(',') if c.strip()]
 NOTIFICATION_ENABLED = os.getenv('NOTIFICATION_ENABLED', 'false').lower() == 'true'
 
 # --- Notification Test UI Access Control ---
@@ -347,14 +348,21 @@ def gemini_embed(text):
 # --- Telegram Notification Functions ---
 async def send_telegram_message(message: str):
     """Send a message via Telegram bot"""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
         print("Telegram bot token or chat ID not configured")
         return False
     
     try:
         bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode='Markdown')
-        return True
+        any_success = False
+        for chat_id in TELEGRAM_CHAT_IDS:
+            try:
+                await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
+                any_success = True
+            except Exception as e:
+                print(f"Error sending to chat_id {chat_id}: {str(e)}")
+                continue
+        return any_success
     except Exception as e:
         print(f"Error sending Telegram message: {str(e)}")
         return False
@@ -493,6 +501,49 @@ def send_daily_notification():
     except Exception as e:
         print(f"Error in daily notification: {str(e)}")
 
+def get_actor_display(user_id: str) -> str:
+    """Return a human-friendly actor label using session user metadata when available."""
+    try:
+        user = st.session_state.get('user')
+        if user and getattr(user, 'id', None) == user_id:
+            full_name = (getattr(user, 'user_metadata', {}) or {}).get('full_name')
+            if full_name:
+                return f"{full_name} ({user_id})"
+    except Exception:
+        pass
+    return user_id or "unknown"
+
+def send_interaction_notification(customer_name: str, customer_id: str, actor: str, input_text: str, output_text: str, timestamp: datetime.datetime = None):
+    """Send a formatted interaction notification with input and AI response."""
+    print(f"DEBUG: send_interaction_notification called with customer_name={customer_name}, NOTIFICATION_ENABLED={NOTIFICATION_ENABLED}")
+    if not NOTIFICATION_ENABLED:
+        print("DEBUG: Notifications disabled")
+        return False
+    ts = (timestamp or datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')
+    # Use only the actor's display name (without any ID in parentheses)
+    actor_name_only = actor.split(' (')[0] if actor else 'Unknown'
+    # Trim large bodies to keep Telegram happy
+    def trim(text: str, limit: int = 2000) -> str:
+        if not text:
+            return ""
+        text = text.strip()
+        return text if len(text) <= limit else text[: limit - 3] + "..."
+    input_block = trim(input_text, 800)
+    output_block = trim(output_text, 1200)
+    message = (
+        f"💬 New Customer Interaction!\n\n"
+        f"👤 Customer: {customer_name}\n"
+        f"🆔 Customer ID: {customer_id}\n"
+        f"📅 Timestamp: {ts}\n"
+        f"👨‍💼 Updated by: {actor_name_only}\n\n"
+        f"📝 Input:\n{input_block}\n\n"
+        f"🤖 AI Response:\n{output_block}"
+    )
+    print(f"DEBUG: Sending message: {message[:200]}...")
+    result = send_telegram_message_sync(message)
+    print(f"DEBUG: send_telegram_message_sync returned: {result}")
+    return result
+
 def send_deal_update_notification(customer_name: str, deal_info: str):
     """Send immediate notification when a deal is updated"""
     if not NOTIFICATION_ENABLED:
@@ -515,17 +566,31 @@ def send_deal_update_notification(customer_name: str, deal_info: str):
         print(f"Error sending deal update notification: {str(e)}")
         return False
 
-def send_new_customer_notification(customer_name: str, customer_id: str):
+def send_new_customer_notification(customer_name: str, customer_id: str, actor: str = None, created_at: datetime.datetime = None, profile_summary: str = None):
     """Send notification when a new customer is created"""
     if not NOTIFICATION_ENABLED:
         return False
     
     try:
-        message = f"*🆕 New Customer Alert*\n\n"
-        message += f"*Customer Name:* {customer_name}\n"
-        message += f"*Customer ID:* {customer_id}\n"
-        message += f"*Time:* {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        message += f"*🎯 Action Required:* Review customer profile and initiate contact."
+        # Build message in requested format
+        created_str = (created_at or datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')
+        summary_preview = (profile_summary or "").strip()
+        if len(summary_preview) > 400:
+            summary_preview = summary_preview[:397] + "..."
+        # Use only the actor's display name (without any ID in parentheses)
+        actor_name_only = actor.split(' (')[0] if actor else 'Unknown'
+        message = (
+            f"🚀 New Customer Created!\n\n"
+            f"👤 Customer: {customer_name}\n"
+            f"🆔 Display ID: {customer_id}\n"
+            f"📅 Created: {created_str}\n"
+            f"👨‍💼 Created by: {actor_name_only}\n\n"
+        )
+        if summary_preview:
+            message += (
+                f"📋 Profile Summary:\n"
+                f"{summary_preview}"
+            )
         
         success = send_telegram_message_sync(message)
         if success:
@@ -1146,9 +1211,15 @@ def create_new_customer(customer_name: str, user_id: str):
             if response.data:
                 # Clear the creation state first
                 st.session_state.customer_creation_state = None
-                
-                # Send new customer notification
-                send_new_customer_notification(customer_name, display_id)
+
+                # Send new customer notification with actor and profile summary
+                try:
+                    actor = get_actor_display(user_id)
+                    created_at = datetime.datetime.now()
+                    profile_summary = profile_output
+                    send_new_customer_notification(customer_name, display_id, actor, created_at, profile_summary)
+                except Exception:
+                    send_new_customer_notification(customer_name, display_id)
                 
                 return response.data[0]
             else:
@@ -1963,29 +2034,25 @@ def update_customer_interaction(customer_id: str, new_input: str, new_output: st
             'updated_at': datetime.datetime.now().isoformat()
         }).eq('customer_id', customer_id).execute()
         
-        # 6. Send deal update notification if deals are mentioned
-        if response.data:
-            # Supabase returns a list of updated rows for update(); pick first
-            updated_row = response.data[0] if isinstance(response.data, list) and len(response.data) > 0 else response.data
-            customer_name = updated_row.get('customer_name', 'Unknown Customer') if isinstance(updated_row, dict) else 'Unknown Customer'
-            
-            # Check if the interaction contains deal-related information
-            if any(keyword in new_output.lower() for keyword in ['deal', 'quote', 'order', 'purchase', 'rfq', 'po']):
-                # Extract deal information from the output
-                deal_info = ""
-                if 'CURRENT DEALS:' in new_output:
-                    deals_section = new_output.split('CURRENT DEALS:')[1].split('CLOSED DEALS:')[0] if 'CLOSED DEALS:' in new_output else new_output.split('CURRENT DEALS:')[1]
-                    # Take first few lines of deals info
-                    deal_lines = [line.strip() for line in deals_section.strip().split('\n')[:5] if line.strip() and '|' in line and 'Deal_ID' not in line and '---' not in line]
-                    deal_info = "\n".join(deal_lines)
-                elif 'DEAL NARRATIVE:' in new_output:
-                    narrative_section = new_output.split('DEAL NARRATIVE:')[1].split('FOLLOW-UP QUESTIONS:')[0] if 'FOLLOW-UP QUESTIONS:' in new_output else new_output.split('DEAL NARRATIVE:')[1]
-                    deal_info = narrative_section.strip()[:200] + "..." if len(narrative_section) > 200 else narrative_section.strip()
-                else:
-                    deal_info = new_output[:200] + "..." if len(new_output) > 200 else new_output
-                
-                # Send notification
-                send_deal_update_notification(customer_name, deal_info)
+        # 6. Send standardized interaction notification (do not depend on response.data)
+        try:
+            customer_name = 'Unknown Customer'
+            try:
+                if customer and getattr(customer, 'data', None):
+                    customer_name = customer.data.get('customer_name', customer_name)
+            except Exception:
+                pass
+            actor = get_actor_display(user_id)
+            send_interaction_notification(
+                customer_name=customer_name,
+                customer_id=customer_id,
+                actor=actor,
+                input_text=new_input,
+                output_text=new_output,
+                timestamp=datetime.datetime.now()
+            )
+        except Exception:
+            pass
         
         return response.data
     except Exception as e:
@@ -2588,7 +2655,14 @@ def render_analysis_ui(user_id: str):
                     if NOTIFICATION_ENABLED and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
                         with st.spinner("Sending deal update test..."):
                             test_deal_info = "Test Deal D-001: RDP 1000kg - Quote sent - Waiting for PO"
-                            success = send_deal_update_notification("Test Customer", test_deal_info)
+                            success = send_interaction_notification(
+                                customer_name="Test Customer",
+                                customer_id="test-customer-id",
+                                actor="Test User",
+                                input_text="Test interaction input",
+                                output_text=test_deal_info,
+                                timestamp=datetime.datetime.now()
+                            )
                             if success:
                                 st.success("✅ Deal update test sent successfully!")
                             else:
