@@ -205,6 +205,45 @@ GEMINI_EMBED_MODEL = os.getenv('GEMINI_EMBED_MODEL', 'text-embedding-004')
 GEMINI_CHAT_URL = f'https://generativelanguage.googleapis.com/v1/models/{GEMINI_CHAT_MODEL}:generateContent'
 GEMINI_EMBED_URL = f'https://generativelanguage.googleapis.com/v1/models/{GEMINI_EMBED_MODEL}:embedContent'
 
+# --- Telegram notifications ---
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+TELEGRAM_CHAT_IDS = [c.strip() for c in (TELEGRAM_CHAT_ID or '').split(',') if c.strip()]
+NOTIFICATION_ENABLED = os.getenv('NOTIFICATION_ENABLED', 'false').lower() == 'true'
+
+def get_actor_display(user_id: str) -> str:
+    """Return a human-friendly actor label using session user metadata when available."""
+    try:
+        user = st.session_state.get('user')
+        if user and getattr(user, 'id', None) == user_id:
+            full_name = (getattr(user, 'user_metadata', {}) or {}).get('full_name')
+            if full_name:
+                return f"{full_name} ({user_id})"
+    except Exception:
+        pass
+    return user_id or "unknown"
+
+def send_telegram_message(message: str) -> bool:
+    """Send a Telegram message if notifications are enabled and credentials are present."""
+    if not NOTIFICATION_ENABLED:
+        return False
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
+        return False
+    try:
+        api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        any_success = False
+        for chat_id in TELEGRAM_CHAT_IDS:
+            payload = {
+                "chat_id": chat_id,
+                "text": message,
+                "disable_web_page_preview": True
+            }
+            resp = requests.post(api_url, json=payload, timeout=10)
+            any_success = any_success or (resp.status_code == 200)
+        return any_success
+    except Exception:
+        return False
+
 def gemini_chat(messages):
     """Call Gemini chat API with OpenAI-style messages."""
     if not GEMINI_API_KEY:
@@ -838,6 +877,18 @@ def create_new_customer(customer_name: str, user_id: str):
             if response.data:
                 # Clear the creation state first
                 st.session_state.customer_creation_state = None
+                # Send Telegram notification for new customer
+                try:
+                    actor = get_actor_display(user_id)
+                    msg = (
+                        f"🆕 New customer created\n"
+                        f"Name: {customer_name}\n"
+                        f"Display ID: {display_id}\n"
+                        f"By: {actor}"
+                    )
+                    send_telegram_message(msg)
+                except Exception:
+                    pass
                 return response.data[0]
             else:
                 st.error("Failed to create customer")
@@ -1467,6 +1518,26 @@ def update_customer_interaction(customer_id: str, new_input: str, new_output: st
             'interaction_metadata': updated_metas,    # list of dicts (JSON)
             'updated_at': datetime.datetime.now().isoformat()
         }).eq('customer_id', customer_id).execute()
+        # Send Telegram notification for every interaction
+        try:
+            actor = get_actor_display(user_id)
+            preview = new_input[:200].replace('\n', ' ')
+            customer_name = None
+            try:
+                customer_name = customer.data.get('customer_name') if getattr(customer, 'data', None) else None
+            except Exception:
+                customer_name = None
+            interaction_type = "File Upload" if new_input.strip().lower().startswith("uploaded file:") else "Text Interaction"
+            msg = (
+                f"💬 New interaction saved\n"
+                f"Customer: {customer_name or 'Unknown'} ({customer_id})\n"
+                f"By: {actor}\n"
+                f"Type: {interaction_type}\n"
+                f"Input: {preview}"
+            )
+            send_telegram_message(msg)
+        except Exception:
+            pass
         return response.data
     except Exception as e:
         print("Supabase update error:", e)
