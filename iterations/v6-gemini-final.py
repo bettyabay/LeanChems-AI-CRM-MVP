@@ -368,10 +368,31 @@ async def send_telegram_message(message: str):
         return False
 
 def send_telegram_message_sync(message: str):
-    """Synchronous wrapper for sending Telegram messages"""
+    """Send a Telegram message to all configured chat IDs via HTTP (multi-recipient)."""
+    if not NOTIFICATION_ENABLED:
+        print("Notifications are disabled")
+        return False
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
+        print("Telegram bot token or chat IDs not configured")
+        return False
     try:
-        asyncio.run(send_telegram_message(message))
-        return True
+        api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        any_success = False
+        for chat_id in TELEGRAM_CHAT_IDS:
+            try:
+                payload = {
+                    "chat_id": chat_id,
+                    "text": message,
+                    "disable_web_page_preview": True
+                }
+                resp = requests.post(api_url, json=payload, timeout=10)
+                if resp.status_code != 200:
+                    print(f"Error sending to {chat_id}: {resp.status_code} {resp.text[:200]}")
+                any_success = any_success or (resp.status_code == 200)
+            except Exception as e:
+                print(f"Exception sending to {chat_id}: {str(e)}")
+                continue
+        return any_success
     except Exception as e:
         print(f"Error in sync Telegram send: {str(e)}")
         return False
