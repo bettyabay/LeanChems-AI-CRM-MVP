@@ -913,10 +913,14 @@ def delete_subject(subject_id: str):
 
 # Add a function to load Lottie animation JSON from a URL.
 def load_lottieurl(url: str):
-    r = requests.get(url)
-    if r.status_code != 200:
+    try:
+        r = requests.get(url, timeout=6)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
+        # Fail-safe: if network/DNS fails, skip animation
         return None
-    return r.json()
 
 # --- UI Rendering Functions ---
 
@@ -1340,6 +1344,122 @@ If the context is insufficient, clearly state what information is missing."""
                             filename = doc.get('metadata', {}).get('filename', 'Unknown')
                             st.write(f"{i}. {filename} (Relevance: {doc.get('similarity', 0):.2f})")
 
+def render_apply_to_leanchems_ui(user_id: str):
+    """Module 4: Apply selected subject to LeanChems situation and save application record."""
+    st.title("📌 Apply to LeanChems")
+    subjects_dict = get_all_subject_names()
+    if not subjects_dict:
+        st.warning("No subjects found. Please create a subject first.")
+        return
+    sorted_subject_names = sorted(subjects_dict.keys())
+    col1, col2 = st.columns([0.4, 0.6])
+    with col1:
+        selected_subject_name = st.selectbox("Select Subject", options=sorted_subject_names, key="apply_subject_select")
+        narrative = st.text_area("Describe LeanChems situation", key="apply_narrative", height=180)
+        uploaded_file = st.file_uploader("Optional: Upload supporting file (PDF, TXT, DOCX)", type=["pdf", "txt", "docx"], key="apply_upload")
+        run = st.button("Run Subject Mapping", key="apply_run", type="primary")
+    with col2:
+        if run and selected_subject_name and narrative:
+            with st.spinner("Analyzing and mapping to framework..."):
+                subject_id = subjects_dict[selected_subject_name]
+                # Placeholder parsed data and scenarios; replace with real LLM logic as needed
+                parsed_data = {
+                    "layers": [
+                        {"layer": "Context", "elements": [], "coverage": 0.6},
+                        {"layer": "Drivers", "elements": [], "coverage": 0.7},
+                        {"layer": "Metrics", "elements": [], "coverage": 0.9},
+                        {"layer": "Scenarios", "elements": [], "coverage": 0.8}
+                    ]
+                }
+                coverage_score = 85.0
+                scenario_json = {
+                    "current": {"summary": f"Current summary for {selected_subject_name}"},
+                    "next": [
+                        {"scenario": "Option A", "confidence": 0.7},
+                        {"scenario": "Option B", "confidence": 0.5}
+                    ]
+                }
+                record = {
+                    "id": str(uuid.uuid4()),
+                    "subject_id": subject_id,
+                    "input_text": narrative,
+                    "parsed_data": parsed_data,
+                    "coverage_score": coverage_score,
+                    "scenario_json": scenario_json,
+                    "created_at": datetime.datetime.now().isoformat()
+                }
+                try:
+                    supabase_client.table('subject_application').insert(record).execute()
+                    st.success("Application saved.")
+                except Exception as e:
+                    st.error(f"Failed to save application: {e}")
+                st.subheader("✅ Information Extraction Matrix")
+                st.json(parsed_data)
+                st.subheader("📊 Coverage Status")
+                st.progress(min(max(int(coverage_score), 0), 100))
+                st.write(f"Overall Coverage: {coverage_score:.1f}%")
+                st.subheader("🧭 Scenario Mapping")
+                st.json(scenario_json)
+
+def render_ai_coach_ui(user_id: str):
+    """Module 5: AI Coach on top of a selected application."""
+    st.title("🧠 AI Coach for LeanChems")
+    subjects_dict = get_all_subject_names()
+    if not subjects_dict:
+        st.warning("No subjects found. Please create a subject first.")
+        return
+    sorted_subject_names = sorted(subjects_dict.keys())
+    col1, col2 = st.columns([0.4, 0.6])
+    with col1:
+        selected_subject_name = st.selectbox("Select Subject", options=sorted_subject_names, key="coach_subject_select")
+        selected_app = None
+        apps = []
+        if selected_subject_name:
+            subject_id = subjects_dict[selected_subject_name]
+            try:
+                resp = supabase_client.table('subject_application').select('id,created_at,coverage_score').eq('subject_id', subject_id).order('created_at', desc=True).execute()
+                apps = resp.data or []
+            except Exception as e:
+                st.error(f"Failed to load applications: {e}")
+            options = [f"{a['id']} | {a['created_at']} | {a.get('coverage_score', 'n/a')}%" for a in apps] or ["None"]
+            chosen = st.selectbox("Select Previous Application", options=options, key="coach_app_select")
+            if apps:
+                idx = options.index(chosen)
+                selected_app = apps[idx]
+        run = st.button("Analyze & Coach", key="coach_run", type="primary")
+    with col2:
+        if run and selected_app:
+            # Placeholder coach logic; replace with real LLM analysis
+            criticality_score = 72.0
+            maturity_level = "Emerging"
+            action_plan_json = {
+                "short_term": ["Validate metrics", "Close top gaps"],
+                "mid_term": ["Pilot scenario A", "Build dashboards"],
+                "long_term": ["Institutionalize process", "Scale"]
+            }
+            recommendations_text = f"For {selected_subject_name}, focus on high impact/urgency gaps."
+            record = {
+                "id": str(uuid.uuid4()),
+                "subject_application_id": selected_app['id'],
+                "criticality_score": criticality_score,
+                "maturity_level": maturity_level,
+                "action_plan_json": action_plan_json,
+                "recommendations_text": recommendations_text,
+                "created_at": datetime.datetime.now().isoformat()
+            }
+            try:
+                supabase_client.table('subject_coach_analysis').insert(record).execute()
+                st.success("Coach analysis saved.")
+            except Exception as e:
+                st.error(f"Failed to save coach analysis: {e}")
+            st.subheader("📈 Maturity & Criticality")
+            st.metric("Criticality", f"{criticality_score:.1f}")
+            st.write(f"Maturity: {maturity_level}")
+            st.subheader("🧭 Recommended Strategy")
+            st.json(action_plan_json)
+            st.subheader("📝 Narrative Recommendations")
+            st.write(recommendations_text)
+
 # Initialize session state
 if not st.session_state.get("messages", None):
     st.session_state.messages = []
@@ -1412,7 +1532,7 @@ if st.session_state.authenticated and st.session_state.user:
         st.title("🤖 LeanAI Model MVP Dashboard")
         st.write("Build and manage your AI-powered knowledge base with intelligent document processing and narrative generation.")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             if st.button("📝 Create Subject", key="btn_create_subject", use_container_width=True, type="primary"):
                 st.session_state.leanai_view = 'create'
@@ -1424,6 +1544,14 @@ if st.session_state.authenticated and st.session_state.user:
         with col3:
             if st.button("📖 RAG for MVP", key="btn_rag_mvp", use_container_width=True, type="primary"):
                 st.session_state.leanai_view = 'rag'
+                st.rerun()
+        with col4:
+            if st.button("📌 Apply to LeanChems", key="btn_apply_mvp", use_container_width=True, type="primary"):
+                st.session_state.leanai_view = 'apply'
+                st.rerun()
+        with col5:
+            if st.button("🧠 AI Coach", key="btn_coach_mvp", use_container_width=True, type="primary"):
+                st.session_state.leanai_view = 'coach'
                 st.rerun()
 
     else:
@@ -1445,6 +1573,10 @@ if st.session_state.authenticated and st.session_state.user:
             render_manage_subject_ui(user_id)
         elif st.session_state.leanai_view == 'rag':
             render_subject_rag_ui(user_id)
+        elif st.session_state.leanai_view == 'apply':
+            render_apply_to_leanchems_ui(user_id)
+        elif st.session_state.leanai_view == 'coach':
+            render_ai_coach_ui(user_id)
 
 else:
     # Apply custom styling
